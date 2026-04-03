@@ -1,0 +1,15 @@
+vehicle_id,mission_class,route,reserve_energy,status
+V001,passenger,HUB_A|MIC_1|HUB_B,100,queued
+V002,passenger,HUB_A|HUB_B,95,queued
+V003,cargo,HUB_B|MIC_2|HUB_A,110,queued
+V004,passenger,MIC_1|HUB_B,90,queued
+V005,medevac,HUB_A|HUB_B|PAD_1,120,queued
+V006,passenger,HUB_B|HUB_A,100,queued
+V007,cargo,HUB_A|HUB_B,105,queued
+V008,passenger,HUB_B|PAD_1|HUB_B,98,queued
+V009,passenger,HUB_A|HUB_B,96,queued
+V010,passenger,HUB_A|HUB_B,96,queued
+V011,cargo,HUB_B|HUB_A,108,queued
+V012,passenger,HUB_B|PAD_1,97,queued
+V013,passenger,HUB_A|MIC_1|HUB_B,102,queued
+V014,medevac,HUB_B|PAD_1,118,queued

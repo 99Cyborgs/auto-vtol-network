@@ -1,0 +1,20 @@
+scenario_name = "nominal"
+description = "Baseline toy regional network with low disturbance and nominal throughput."
+time_step_minutes = 5
+duration_minutes = 180
+output_root = "../outputs"
+
+[data_sources]
+nodes = "../data/sample/nodes.csv"
+corridors = "../data/sample/corridors.csv"
+vehicles = "../data/sample/vehicles.csv"
+
+[disturbances.base]
+weather_severity = 0.10
+comms_reliability = 0.98
+
+[[disturbances.schedule]]
+start_minute = 0
+weather_severity = 0.10
+comms_reliability = 0.98
+

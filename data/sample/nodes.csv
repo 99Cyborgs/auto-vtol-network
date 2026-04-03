@@ -1,0 +1,6 @@
+node_id,node_type,service_rate,contingency_capacity,occupancy,operational_state
+HUB_A,hub,8,18,0,normal
+HUB_B,hub,8,16,0,normal
+MIC_1,micro,4,8,0,normal
+MIC_2,micro,4,8,0,normal
+PAD_1,emergency,2,4,0,normal

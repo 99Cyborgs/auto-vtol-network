@@ -1,0 +1,10 @@
+corridor_id,origin,destination,length,free_flow_speed,base_capacity,required_separation
+C01,HUB_A,MIC_1,24,120,6,45
+C02,MIC_1,HUB_B,28,115,5,50
+C03,HUB_B,MIC_2,18,125,6,45
+C04,MIC_2,HUB_A,32,120,5,50
+C05,HUB_A,HUB_B,42,140,6,40
+C06,HUB_B,HUB_A,42,140,6,40
+C07,HUB_B,PAD_1,14,110,3,60
+C08,PAD_1,HUB_B,14,110,3,60
+C09,MIC_1,HUB_A,24,120,6,45

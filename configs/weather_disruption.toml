@@ -1,0 +1,35 @@
+scenario_name = "weather_disruption"
+description = "Toy regional network with a mid-run weather disruption that constrains corridor performance."
+time_step_minutes = 5
+duration_minutes = 210
+output_root = "../outputs"
+
+[data_sources]
+nodes = "../data/sample/nodes.csv"
+corridors = "../data/sample/corridors.csv"
+vehicles = "../data/sample/vehicles.csv"
+
+[disturbances.base]
+weather_severity = 0.10
+comms_reliability = 0.98
+
+[[disturbances.schedule]]
+start_minute = 0
+weather_severity = 0.10
+comms_reliability = 0.98
+
+[[disturbances.schedule]]
+start_minute = 60
+weather_severity = 0.45
+comms_reliability = 0.88
+
+[[disturbances.schedule]]
+start_minute = 120
+weather_severity = 0.75
+comms_reliability = 0.72
+
+[[disturbances.schedule]]
+start_minute = 165
+weather_severity = 0.25
+comms_reliability = 0.92
+
