@@ -19,8 +19,13 @@ class DisturbanceTimeline:
                 active_state = DisturbanceState(
                     weather_severity=entry.weather_severity,
                     comms_reliability=entry.comms_reliability,
+                    comms_latency_minutes=entry.comms_latency_minutes,
+                    message_drop_probability=entry.message_drop_probability,
+                    stale_after_minutes=entry.stale_after_minutes,
+                    reroute_delay_minutes=entry.reroute_delay_minutes,
+                    low_bandwidth_threshold_minutes=entry.low_bandwidth_threshold_minutes,
+                    node_service_multiplier=entry.node_service_multiplier,
                 )
             else:
                 break
         return active_state
-

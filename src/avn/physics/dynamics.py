@@ -69,11 +69,13 @@ def approximate_reserve_energy_drain(
     *,
     mission_class: str = "passenger",
     status: str = "enroute",
+    reserve_multiplier: float = 1.0,
 ) -> float:
     mission_factor = {
         "passenger": 1.0,
         "cargo": 1.15,
         "medevac": 1.25,
+        "public_service": 1.10,
     }.get(mission_class, 1.05)
 
     if status == "enroute":
@@ -83,5 +85,4 @@ def approximate_reserve_energy_drain(
         base_drain = time_step_minutes * 0.02
         weather_factor = 1.0 + 0.2 * weather_severity
 
-    return base_drain * mission_factor * weather_factor
-
+    return base_drain * mission_factor * weather_factor * reserve_multiplier

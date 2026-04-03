@@ -1,0 +1,73 @@
+scenario_name = "comms_plus_hub_degraded"
+description = "Coupled comms freshness degradation and hub service loss to separate stale information from raw node pressure."
+time_step_minutes = 5
+duration_minutes = 200
+output_root = "../outputs"
+seed = 1208
+
+[data_sources]
+nodes = "../data/phase2b/nodes.csv"
+corridors = "../data/phase2b/corridors.csv"
+vehicles = "../data/phase2b/vehicles.csv"
+
+[[suppliers]]
+supplier_id = "infra_core"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "regional_ops"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "rescue_grid"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "municipal_backup"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "alpha_id"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "bravo_nav"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "civic_mesh"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "rescue_ops"
+supplier_type = "identity"
+
+[modifiers]
+demand_multiplier = 1.60
+
+[disturbances.base]
+weather_severity = 0.16
+comms_reliability = 0.72
+comms_latency_minutes = 6.0
+message_drop_probability = 0.18
+stale_after_minutes = 8.0
+reroute_delay_minutes = 12.0
+low_bandwidth_threshold_minutes = 14.0
+node_service_multiplier = 1.0
+
+[infrastructure]
+[[infrastructure.events]]
+start_minute = 20
+end_minute = 160
+target_type = "node"
+target_id = "HUB_B"
+state = "reduced"
+service_multiplier = 0.45
+
+[safe_region]
+max_corridor_load_ratio = 0.95
+max_node_utilization_ratio = 0.92
+max_queue_ratio = 0.75
+max_stale_state_exposure_minutes = 15.0
+min_trusted_participant_fraction = 0.55
+max_unsafe_admissions = 0
+min_reachable_landing_options = 1.0
+max_contingency_saturation_duration = 20.0
+max_operator_interventions_per_hour = 8.0
+
+[operator]
+max_interventions_per_hour = 8.0
+override_latency_minutes = 5.0

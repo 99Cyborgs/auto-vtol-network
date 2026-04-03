@@ -1,0 +1,15 @@
+vehicle_id,mission_class,route,reserve_energy,status,supplier_id,trust_state,intent_update_interval_minutes,min_contingency_margin
+PX01,cargo,HUB_A|HUB_B,52,queued,alpha_id,trusted,5,10
+PX02,cargo,HUB_A|MIC_1|HUB_B,58,queued,alpha_id,trusted,5,10
+PX03,medevac,HUB_B|PAD_1,46,queued,rescue_ops,trusted,5,10
+PX04,public_service,HUB_B|HUB_A,55,queued,civic_mesh,trusted,5,10
+PX05,cargo,MIC_1|HUB_B|PAD_1,54,queued,alpha_id,trusted,5,10
+PX06,cargo,HUB_B|MIC_2|HUB_A,52,queued,bravo_nav,trusted,5,10
+PX07,medevac,HUB_A|PAD_2,45,queued,rescue_ops,trusted,5,10
+PX08,public_service,HUB_B|PAD_3,42,queued,civic_mesh,trusted,5,10
+PX09,cargo,HUB_A|HUB_B|PAD_1,50,queued,alpha_id,trusted,5,10
+PX10,cargo,HUB_B|HUB_A|PAD_2,51,queued,bravo_nav,trusted,5,10
+PX11,medevac,HUB_A|HUB_B,49,queued,rescue_ops,trusted,5,10
+PX12,cargo,MIC_2|HUB_A,43,queued,bravo_nav,trusted,5,10
+PX13,public_service,HUB_A|PAD_3,41,queued,civic_mesh,trusted,5,10
+PX14,cargo,HUB_B|PAD_2,44,queued,alpha_id,trusted,5,10

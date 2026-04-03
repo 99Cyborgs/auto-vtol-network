@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import argparse
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 
 from avn.simulation.engine import run_from_config
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run an Auto-VTOL-Network scenario.")
-    parser.add_argument("config", type=Path, help="Path to a TOML scenario config.")
-    args = parser.parse_args(argv)
-
-    result = run_from_config(args.config)
+def run_named_config(config_name: str) -> None:
+    result = run_from_config(ROOT / "configs" / config_name)
     print(f"Scenario: {result.scenario_name}")
     print(f"Run directory: {result.output_dir}")
     print(f"Metrics CSV: {result.metrics_path}")
@@ -29,8 +28,3 @@ def main(argv: list[str] | None = None) -> int:
         f"mean_reserve={result.summary['mean_reserve_energy']:.2f}, "
         f"failure={result.summary['first_dominant_failure_mechanism']}"
     )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

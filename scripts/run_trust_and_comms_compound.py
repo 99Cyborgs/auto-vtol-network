@@ -4,7 +4,7 @@ from _scenario_runner import run_named_config
 
 
 def main() -> None:
-    run_named_config("nominal.toml")
+    run_named_config("trust_and_comms_compound.toml")
 
 
 if __name__ == "__main__":

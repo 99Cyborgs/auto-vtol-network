@@ -25,6 +25,8 @@ class MetricsRecorder:
     def write_metrics_csv(self, output_dir: Path) -> Path:
         output_dir.mkdir(parents=True, exist_ok=True)
         path = output_dir / "metrics.csv"
+        if not self.snapshots:
+            raise ValueError("At least one metrics snapshot is required")
         with path.open("w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=list(asdict(self.snapshots[0]).keys()))
             writer.writeheader()
@@ -33,9 +35,11 @@ class MetricsRecorder:
         return path
 
     def write_event_log(self, output_dir: Path) -> Path:
-        output_dir.mkdir(parents=True, exist_ok=True)
-        path = output_dir / "events.json"
-        with path.open("w", encoding="utf-8") as handle:
-            json.dump(self.events, handle, indent=2)
-        return path
+        return self.write_json(output_dir, "events.json", self.events)
 
+    def write_json(self, output_dir: Path, filename: str, payload: Any) -> Path:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / filename
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+        return path

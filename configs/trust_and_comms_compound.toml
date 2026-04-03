@@ -1,0 +1,121 @@
+scenario_name = "trust_and_comms_compound"
+description = "Trust degradation, stale information, and contingency loss combined to classify the first dominant failure mechanism."
+time_step_minutes = 5
+duration_minutes = 220
+output_root = "../outputs"
+seed = 1209
+
+[data_sources]
+nodes = "../data/phase2b/nodes.csv"
+corridors = "../data/phase2b/corridors.csv"
+vehicles = "../data/phase2b/vehicles.csv"
+
+[[suppliers]]
+supplier_id = "infra_core"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "regional_ops"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "rescue_grid"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "municipal_backup"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "alpha_id"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "bravo_nav"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "civic_mesh"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "rescue_ops"
+supplier_type = "identity"
+
+[modifiers]
+demand_multiplier = 1.60
+reserve_consumption_multiplier = 1.20
+
+[disturbances.base]
+weather_severity = 0.18
+comms_reliability = 0.70
+comms_latency_minutes = 6.0
+message_drop_probability = 0.20
+stale_after_minutes = 8.0
+reroute_delay_minutes = 12.0
+low_bandwidth_threshold_minutes = 14.0
+node_service_multiplier = 0.95
+
+[[disturbances.schedule]]
+start_minute = 80
+weather_severity = 0.35
+comms_reliability = 0.64
+comms_latency_minutes = 8.0
+message_drop_probability = 0.26
+stale_after_minutes = 8.0
+reroute_delay_minutes = 14.0
+low_bandwidth_threshold_minutes = 14.0
+node_service_multiplier = 0.90
+
+[trust]
+[[trust.events]]
+start_minute = 20
+target_type = "supplier"
+target_id = "alpha_id"
+trigger = "supplier_compromise"
+resulting_state = "degraded"
+propagation_delay_minutes = 10
+
+[[trust.events]]
+start_minute = 75
+target_type = "supplier"
+target_id = "alpha_id"
+trigger = "credential_expiry"
+resulting_state = "revoked"
+propagation_delay_minutes = 10
+
+[[trust.events]]
+start_minute = 130
+target_type = "vehicle"
+target_id = "PX05"
+trigger = "operator_override"
+resulting_state = "trusted"
+
+[infrastructure]
+[[infrastructure.events]]
+start_minute = 60
+end_minute = 220
+target_type = "node"
+target_id = "PAD_2"
+state = "reduced"
+service_multiplier = 0.8
+contingency_slots_delta = -1
+
+[[vehicle_injections]]
+start_minute = 45
+vehicle_id = "VX99"
+mission_class = "public_service"
+route = "HUB_B|PAD_3"
+reserve_energy = 38
+supplier_id = "spoof_mesh"
+trust_state = "unknown"
+status = "queued"
+note = "compound_spoof_injection"
+
+[safe_region]
+max_corridor_load_ratio = 0.95
+max_node_utilization_ratio = 0.92
+max_queue_ratio = 0.75
+max_stale_state_exposure_minutes = 15.0
+min_trusted_participant_fraction = 0.60
+max_unsafe_admissions = 0
+min_reachable_landing_options = 1.0
+max_contingency_saturation_duration = 15.0
+max_operator_interventions_per_hour = 8.0
+
+[operator]
+max_interventions_per_hour = 8.0
+override_latency_minutes = 5.0

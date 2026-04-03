@@ -1,0 +1,95 @@
+scenario_name = "supplier_compromise"
+description = "Identity supplier compromise that propagates trust degradation and quarantine pressure."
+time_step_minutes = 5
+duration_minutes = 200
+output_root = "../outputs"
+seed = 1204
+
+[data_sources]
+nodes = "../data/phase2b/nodes.csv"
+corridors = "../data/phase2b/corridors.csv"
+vehicles = "../data/phase2b/vehicles.csv"
+
+[[suppliers]]
+supplier_id = "infra_core"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "regional_ops"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "rescue_grid"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "municipal_backup"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "alpha_id"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "bravo_nav"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "civic_mesh"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "rescue_ops"
+supplier_type = "identity"
+
+[modifiers]
+demand_multiplier = 1.25
+
+[disturbances.base]
+weather_severity = 0.14
+comms_reliability = 0.92
+comms_latency_minutes = 2.0
+message_drop_probability = 0.05
+stale_after_minutes = 10.0
+reroute_delay_minutes = 7.0
+low_bandwidth_threshold_minutes = 16.0
+node_service_multiplier = 1.0
+
+[trust]
+[[trust.events]]
+start_minute = 25
+target_type = "supplier"
+target_id = "alpha_id"
+trigger = "supplier_compromise"
+resulting_state = "degraded"
+propagation_delay_minutes = 10
+
+[[trust.events]]
+start_minute = 55
+target_type = "vehicle"
+target_id = "PX09"
+trigger = "intent_mismatch"
+resulting_state = "quarantined"
+
+[[trust.events]]
+start_minute = 90
+target_type = "supplier"
+target_id = "alpha_id"
+trigger = "credential_expiry"
+resulting_state = "revoked"
+propagation_delay_minutes = 10
+
+[[trust.events]]
+start_minute = 130
+target_type = "vehicle"
+target_id = "PX02"
+trigger = "operator_override"
+resulting_state = "trusted"
+
+[safe_region]
+max_corridor_load_ratio = 1.10
+max_node_utilization_ratio = 0.92
+max_queue_ratio = 0.75
+max_stale_state_exposure_minutes = 300.0
+min_trusted_participant_fraction = 0.80
+max_unsafe_admissions = 0
+min_reachable_landing_options = 1.0
+max_contingency_saturation_duration = 25.0
+max_operator_interventions_per_hour = 100.0
+
+[operator]
+max_interventions_per_hour = 8.0
+override_latency_minutes = 5.0

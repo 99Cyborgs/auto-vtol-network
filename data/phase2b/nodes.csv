@@ -1,0 +1,8 @@
+node_id,node_type,service_rate,contingency_capacity,occupancy,operational_state,supplier_id,trust_state,contingency_landing_slots,contingency_turnaround_minutes,landing_priority,accepts_degraded_mode
+HUB_A,hub,12,24,0,normal,infra_core,trusted,1,90,2,true
+HUB_B,hub,10,20,0,normal,infra_core,trusted,1,90,2,true
+MIC_1,micro,6,12,0,normal,regional_ops,trusted,0,120,0,true
+MIC_2,micro,6,12,0,normal,regional_ops,trusted,0,120,0,true
+PAD_1,emergency,3,6,0,normal,rescue_grid,trusted,2,180,3,true
+PAD_2,emergency,3,6,0,normal,rescue_grid,trusted,2,180,3,true
+PAD_3,emergency,2,4,0,normal,municipal_backup,trusted,1,180,1,false

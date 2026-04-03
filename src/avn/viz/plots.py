@@ -23,6 +23,11 @@ def generate_plots(snapshots: list[MetricsSnapshot], output_dir: Path) -> list[P
     capacities = [snapshot.mean_effective_capacity for snapshot in snapshots]
     weather = [snapshot.weather_severity for snapshot in snapshots]
     comms = [snapshot.comms_reliability for snapshot in snapshots]
+    info_age = [snapshot.information_age_mean for snapshot in snapshots]
+    trusted_fraction = [snapshot.trusted_active_fraction for snapshot in snapshots]
+    unsafe_admissions = [snapshot.unsafe_admission_count for snapshot in snapshots]
+    landing_options = [snapshot.reachable_landing_option_mean for snapshot in snapshots]
+    contingency_utilization = [snapshot.contingency_node_utilization for snapshot in snapshots]
 
     plot_paths: list[Path] = []
 
@@ -82,5 +87,39 @@ def generate_plots(snapshots: list[MetricsSnapshot], output_dir: Path) -> list[P
     plt.close(fig)
     plot_paths.append(path)
 
-    return plot_paths
+    fig, ax1 = plt.subplots(figsize=(8, 4.5))
+    ax1.plot(times, info_age, color="#bcbd22", linewidth=2, label="Mean Information Age")
+    ax1.set_xlabel("Simulation Time (minutes)")
+    ax1.set_ylabel("Information Age (minutes)", color="#bcbd22")
+    ax1.tick_params(axis="y", labelcolor="#bcbd22")
+    ax1.grid(alpha=0.3)
+    ax2 = ax1.twinx()
+    ax2.plot(times, trusted_fraction, color="#17becf", linewidth=2, label="Trusted Active Fraction")
+    ax2.plot(times, unsafe_admissions, color="#7f7f7f", linewidth=1.8, label="Unsafe Admissions")
+    ax2.set_ylabel("Trust / Admissions", color="#17becf")
+    ax2.tick_params(axis="y", labelcolor="#17becf")
+    fig.suptitle("Governance Health")
+    path = output_dir / "governance_health.png"
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    plot_paths.append(path)
 
+    fig, ax1 = plt.subplots(figsize=(8, 4.5))
+    ax1.plot(times, landing_options, color="#e377c2", linewidth=2)
+    ax1.set_xlabel("Simulation Time (minutes)")
+    ax1.set_ylabel("Reachable Landing Options", color="#e377c2")
+    ax1.tick_params(axis="y", labelcolor="#e377c2")
+    ax1.grid(alpha=0.3)
+    ax2 = ax1.twinx()
+    ax2.plot(times, contingency_utilization, color="#d62728", linewidth=2)
+    ax2.set_ylabel("Contingency Utilization", color="#d62728")
+    ax2.tick_params(axis="y", labelcolor="#d62728")
+    fig.suptitle("Contingency Risk")
+    path = output_dir / "contingency_risk.png"
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    plot_paths.append(path)
+
+    return plot_paths

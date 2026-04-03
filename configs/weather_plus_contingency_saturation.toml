@@ -1,0 +1,106 @@
+scenario_name = "weather_plus_contingency_saturation"
+description = "Weather, reserve burn, and landing-slot loss combined to force contingency saturation and no-admissible-landing risk."
+time_step_minutes = 5
+duration_minutes = 220
+output_root = "../outputs"
+seed = 1207
+
+[data_sources]
+nodes = "../data/phase2b/nodes.csv"
+corridors = "../data/phase2b/corridors.csv"
+vehicles = "../data/phase2b/vehicles.csv"
+
+[[suppliers]]
+supplier_id = "infra_core"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "regional_ops"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "rescue_grid"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "municipal_backup"
+supplier_type = "node_ops"
+[[suppliers]]
+supplier_id = "alpha_id"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "bravo_nav"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "civic_mesh"
+supplier_type = "identity"
+[[suppliers]]
+supplier_id = "rescue_ops"
+supplier_type = "identity"
+
+[modifiers]
+demand_multiplier = 1.90
+reserve_consumption_multiplier = 1.35
+weather_multiplier = 1.2
+
+[disturbances.base]
+weather_severity = 0.25
+comms_reliability = 0.90
+comms_latency_minutes = 2.0
+message_drop_probability = 0.06
+stale_after_minutes = 10.0
+reroute_delay_minutes = 8.0
+low_bandwidth_threshold_minutes = 16.0
+node_service_multiplier = 0.95
+
+[[disturbances.schedule]]
+start_minute = 70
+weather_severity = 0.55
+comms_reliability = 0.86
+comms_latency_minutes = 3.0
+message_drop_probability = 0.10
+stale_after_minutes = 10.0
+reroute_delay_minutes = 10.0
+low_bandwidth_threshold_minutes = 16.0
+node_service_multiplier = 0.90
+
+[[disturbances.schedule]]
+start_minute = 120
+weather_severity = 0.75
+comms_reliability = 0.80
+comms_latency_minutes = 4.0
+message_drop_probability = 0.12
+stale_after_minutes = 10.0
+reroute_delay_minutes = 12.0
+low_bandwidth_threshold_minutes = 16.0
+node_service_multiplier = 0.85
+
+[infrastructure]
+[[infrastructure.events]]
+start_minute = 50
+end_minute = 220
+target_type = "node"
+target_id = "PAD_1"
+state = "closed"
+service_multiplier = 0.0
+
+[[infrastructure.events]]
+start_minute = 50
+end_minute = 220
+target_type = "node"
+target_id = "PAD_2"
+state = "reduced"
+service_multiplier = 0.8
+contingency_slots_delta = -1
+
+[safe_region]
+max_corridor_load_ratio = 2.50
+max_node_utilization_ratio = 1.20
+max_queue_ratio = 0.75
+max_stale_state_exposure_minutes = 20.0
+min_trusted_participant_fraction = 0.55
+max_unsafe_admissions = 0
+min_reachable_landing_options = 2.0
+max_contingency_saturation_duration = 15.0
+max_operator_interventions_per_hour = 8.0
+
+[operator]
+max_interventions_per_hour = 8.0
+override_latency_minutes = 5.0
