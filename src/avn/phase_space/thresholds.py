@@ -10,11 +10,16 @@ from typing import Any, Sequence
 
 from avn.phase_space.models import (
     AdmissibilityState,
+    GovernedContradictionRecord,
+    GovernedPromotionRecord,
+    GovernedPromotionState,
+    GovernedThresholdRecord,
     PhasePoint,
     PhaseRegion,
     PromotionGovernanceOutcome,
     ThresholdEvidenceStatus,
     ThresholdEvidenceType,
+    derive_mechanism_leakage_fields,
 )
 
 
@@ -157,6 +162,446 @@ LEGACY_NUISANCE_SOURCE_NAMES = {
     "weather": "weather_severity",
     "contingency": "contingency_saturation_pressure",
 }
+
+CANONICAL_CONTRADICTION_TYPES = (
+    CONTRADICTION_LOCAL_INCONSISTENCY,
+    CONTRADICTION_CROSS_TRANCHE_CONFLICT,
+    CONTRADICTION_ENVELOPE_VIOLATION,
+    CONTRADICTION_NON_MONOTONIC_THRESHOLD,
+    CONTRADICTION_NUISANCE_DOMINANCE,
+)
+
+
+class GovernanceValidationError(ValueError):
+    pass
+
+
+def _normalize_contradiction_token(value: str) -> str:
+    return "".join(character for character in value.upper() if character.isalnum())
+
+
+def _normalize_contradiction_type(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise GovernanceValidationError("Contradiction records must include a non-empty contradiction_type.")
+    normalized = _normalize_contradiction_token(value)
+    lookup = {
+        _normalize_contradiction_token(CONTRADICTION_LOCAL_INCONSISTENCY): CONTRADICTION_LOCAL_INCONSISTENCY,
+        _normalize_contradiction_token(CONTRADICTION_CROSS_TRANCHE_CONFLICT): CONTRADICTION_CROSS_TRANCHE_CONFLICT,
+        _normalize_contradiction_token(CONTRADICTION_ENVELOPE_VIOLATION): CONTRADICTION_ENVELOPE_VIOLATION,
+        _normalize_contradiction_token(CONTRADICTION_NON_MONOTONIC_THRESHOLD): CONTRADICTION_NON_MONOTONIC_THRESHOLD,
+        _normalize_contradiction_token(CONTRADICTION_NUISANCE_DOMINANCE): CONTRADICTION_NUISANCE_DOMINANCE,
+        _normalize_contradiction_token("nuisance_dominance"): CONTRADICTION_NUISANCE_DOMINANCE,
+        _normalize_contradiction_token("non_monotonicity"): CONTRADICTION_NON_MONOTONIC_THRESHOLD,
+    }
+    contradiction_type = lookup.get(normalized)
+    if contradiction_type is None:
+        raise GovernanceValidationError(f"Unknown contradiction type '{value}'.")
+    return contradiction_type
+
+
+def _normalize_contradictions(contradictions: object) -> list[dict[str, object]]:
+    if not isinstance(contradictions, list):
+        raise GovernanceValidationError("Promotion records must include a contradictions list.")
+    normalized: list[dict[str, object]] = []
+    for item in contradictions:
+        if not isinstance(item, dict):
+            raise GovernanceValidationError("Contradiction entries must be dictionaries.")
+        contradiction = dict(item)
+        contradiction["contradiction_type"] = _normalize_contradiction_type(
+            contradiction.get("contradiction_type")
+        )
+        normalized.append(contradiction)
+    return normalized
+
+
+def _normalize_contradiction_records(contradictions: object) -> tuple[GovernedContradictionRecord, ...]:
+    return tuple(
+        GovernedContradictionRecord(
+            contradiction_type=item["contradiction_type"],
+            extra_fields={key: value for key, value in item.items() if key != "contradiction_type"},
+        )
+        for item in _normalize_contradictions(contradictions)
+    )
+
+
+def _resolve_numeric_field(
+    payload: dict[str, object],
+    canonical_key: str,
+    *legacy_keys: str,
+) -> float:
+    candidate_keys = (canonical_key, *legacy_keys)
+    values = [
+        float(payload[key])
+        for key in candidate_keys
+        if isinstance(payload.get(key), (int, float))
+    ]
+    if not values:
+        raise GovernanceValidationError(f"Missing required governance field '{canonical_key}'.")
+    if any(not math.isclose(values[0], value, rel_tol=1e-9, abs_tol=1e-9) for value in values[1:]):
+        raise GovernanceValidationError(f"Inconsistent values supplied for '{canonical_key}'.")
+    return values[0]
+
+
+def _derive_nuisance_legacy_fields(
+    nuisance_vector: dict[str, float],
+    dominant_axis: str | None,
+) -> tuple[float, list[str]]:
+    return derive_mechanism_leakage_fields(
+        nuisance_vector,
+        dominant_axis,
+        legacy_source_names=LEGACY_NUISANCE_SOURCE_NAMES,
+        leakage_threshold=LEAKAGE_THRESHOLD,
+    )
+
+
+def _normalize_nuisance_vector(value: object) -> dict[str, float]:
+    if not isinstance(value, dict):
+        raise GovernanceValidationError("Promotion records must include a nuisance_vector dictionary.")
+    normalized: dict[str, float] = {}
+    valid_axes = {axis for axis, _factor in NUISANCE_AXIS_FACTORS}
+    for axis, score in sorted(value.items()):
+        if axis not in valid_axes:
+            raise GovernanceValidationError(f"Unknown nuisance axis '{axis}'.")
+        if not isinstance(score, (int, float)):
+            raise GovernanceValidationError(f"Nuisance axis '{axis}' must map to a numeric score.")
+        normalized[axis] = float(score)
+    return normalized
+
+
+def _resolve_string_alias(
+    payload: dict[str, object],
+    canonical_key: str,
+    legacy_key: str,
+) -> str | None:
+    canonical_value = payload.get(canonical_key)
+    legacy_value = payload.get(legacy_key)
+    if canonical_value is not None and not isinstance(canonical_value, str):
+        raise GovernanceValidationError(f"{canonical_key} must be a string or null.")
+    if legacy_value is not None and not isinstance(legacy_value, str):
+        raise GovernanceValidationError(f"{legacy_key} must be a string or null.")
+    if (
+        isinstance(canonical_value, str)
+        and isinstance(legacy_value, str)
+        and canonical_value != legacy_value
+    ):
+        raise GovernanceValidationError(
+            f"Inconsistent values supplied for '{canonical_key}'."
+        )
+    if isinstance(canonical_value, str):
+        return canonical_value
+    if isinstance(legacy_value, str):
+        return legacy_value
+    return None
+
+
+def _pop_keys(payload: dict[str, object], keys: Sequence[str]) -> None:
+    for key in keys:
+        payload.pop(key, None)
+
+
+def _normalize_promotion_state(
+    payload: object,
+    *,
+    expected_outcome: str,
+) -> GovernedPromotionState:
+    if not isinstance(payload, dict):
+        raise GovernanceValidationError("Promotion records must include promotion_state.")
+    promoted = payload.get("promoted")
+    if not isinstance(promoted, bool):
+        raise GovernanceValidationError("promotion_state.promoted must be a boolean.")
+    decision = payload.get("decision")
+    if not isinstance(decision, str) or not decision:
+        raise GovernanceValidationError("promotion_state.decision must be a non-empty string.")
+    provided_outcome = payload.get("promotion_governance_outcome")
+    if str(provided_outcome) != expected_outcome:
+        raise GovernanceValidationError(
+            "promotion_state.promotion_governance_outcome is inconsistent with promotion_governance_outcome."
+        )
+    extra_fields = dict(payload)
+    _pop_keys(extra_fields, ("promoted", "decision", "promotion_governance_outcome"))
+    return GovernedPromotionState(
+        promoted=promoted,
+        decision=decision,
+        promotion_governance_outcome=expected_outcome,
+        extra_fields=extra_fields,
+    )
+
+
+def _normalize_governed_promotion_record(
+    payload: dict[str, object],
+    *,
+    decision_keys: Sequence[str] = (),
+) -> GovernedPromotionRecord:
+    normalized = dict(payload)
+    support_density = _resolve_numeric_field(
+        normalized,
+        "support_density",
+        "admissibility_support_density",
+    )
+    support_span = _resolve_numeric_field(
+        normalized,
+        "support_span",
+        "admissibility_support_span",
+    )
+    support_confidence = _resolve_numeric_field(
+        normalized,
+        "support_confidence",
+        "admissibility_support_confidence",
+    )
+    nuisance_vector = _normalize_nuisance_vector(normalized.get("nuisance_vector"))
+    dominant_axis = _resolve_string_alias(normalized, "dominant_axis", "nuisance_dominant_axis")
+    if dominant_axis is not None and dominant_axis not in nuisance_vector:
+        raise GovernanceValidationError(
+            f"dominant_axis '{dominant_axis}' is absent from nuisance_vector."
+        )
+    entropy = _resolve_numeric_field(normalized, "entropy", "nuisance_entropy")
+    contradictions = _normalize_contradiction_records(normalized.get("contradictions"))
+    expected_outcome = map_contradictions_to_outcome(
+        [item.to_dict() for item in contradictions]
+    ).value
+    provided_outcome = normalized.get("promotion_governance_outcome")
+    if provided_outcome is not None and str(provided_outcome) != expected_outcome:
+        raise GovernanceValidationError(
+            "promotion_governance_outcome is inconsistent with contradictions."
+        )
+    monotonicity_violation = normalized.get("monotonicity_violation")
+    if not isinstance(monotonicity_violation, bool):
+        raise GovernanceValidationError("Promotion records must include monotonicity_violation as a boolean.")
+    monotonicity_block_reason = normalized.get("monotonicity_block_reason")
+    if monotonicity_block_reason is not None and not isinstance(monotonicity_block_reason, str):
+        raise GovernanceValidationError("monotonicity_block_reason must be a string or null.")
+    if monotonicity_violation and not monotonicity_block_reason:
+        raise GovernanceValidationError(
+            "monotonicity_block_reason is required when monotonicity_violation is true."
+        )
+    mechanism_leakage_score, mechanism_leakage_sources = _derive_nuisance_legacy_fields(
+        nuisance_vector,
+        dominant_axis,
+    )
+    existing_score = normalized.get("mechanism_leakage_score")
+    if existing_score is not None and (
+        not isinstance(existing_score, (int, float))
+        or not math.isclose(float(existing_score), mechanism_leakage_score, rel_tol=1e-9, abs_tol=1e-9)
+    ):
+        raise GovernanceValidationError("mechanism_leakage_score is inconsistent with nuisance_vector.")
+    existing_sources = normalized.get("mechanism_leakage_sources")
+    if existing_sources is not None and list(existing_sources) != mechanism_leakage_sources:
+        raise GovernanceValidationError("mechanism_leakage_sources is inconsistent with nuisance_vector.")
+
+    decision: str | None = None
+    for key in decision_keys:
+        value = normalized.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value:
+            raise GovernanceValidationError(f"{key} must be a non-empty string when provided.")
+        if decision is not None and decision != value:
+            raise GovernanceValidationError("Governed promotion decision aliases are inconsistent.")
+        decision = value
+
+    extra_fields = dict(normalized)
+    _pop_keys(
+        extra_fields,
+        (
+            "support_density",
+            "support_span",
+            "support_confidence",
+            "admissibility_support_density",
+            "admissibility_support_span",
+            "admissibility_support_confidence",
+            "nuisance_vector",
+            "dominant_axis",
+            "nuisance_dominant_axis",
+            "entropy",
+            "nuisance_entropy",
+            "monotonicity_violation",
+            "monotonicity_block_reason",
+            "contradictions",
+            "promotion_governance_outcome",
+            "mechanism_leakage_score",
+            "mechanism_leakage_sources",
+            *decision_keys,
+        ),
+    )
+    return GovernedPromotionRecord(
+        support_density=support_density,
+        support_span=support_span,
+        support_confidence=support_confidence,
+        nuisance_vector=nuisance_vector,
+        dominant_axis=dominant_axis,
+        entropy=entropy,
+        monotonicity_violation=monotonicity_violation,
+        monotonicity_block_reason=monotonicity_block_reason,
+        contradictions=contradictions,
+        promotion_governance_outcome=expected_outcome,
+        decision=decision,
+        extra_fields=extra_fields,
+    )
+
+
+def normalize_threshold_record(record: dict[str, object]) -> dict[str, object]:
+    if not isinstance(record, dict):
+        raise GovernanceValidationError("Threshold records must be dictionaries.")
+    promotion_record = _normalize_governed_promotion_record(record)
+    promotion_state = _normalize_promotion_state(
+        record.get("promotion_state"),
+        expected_outcome=promotion_record.promotion_governance_outcome,
+    )
+    extra_fields = dict(record)
+    _pop_keys(
+        extra_fields,
+        (
+            "support_density",
+            "support_span",
+            "support_confidence",
+            "admissibility_support_density",
+            "admissibility_support_span",
+            "admissibility_support_confidence",
+            "nuisance_vector",
+            "dominant_axis",
+            "nuisance_dominant_axis",
+            "entropy",
+            "nuisance_entropy",
+            "monotonicity_violation",
+            "monotonicity_block_reason",
+            "contradictions",
+            "promotion_governance_outcome",
+            "mechanism_leakage_score",
+            "mechanism_leakage_sources",
+            "promotion_state",
+        ),
+    )
+    return GovernedThresholdRecord(
+        promotion_record=promotion_record,
+        promotion_state=promotion_state,
+        extra_fields=extra_fields,
+        legacy_source_names=dict(LEGACY_NUISANCE_SOURCE_NAMES),
+        leakage_threshold=LEAKAGE_THRESHOLD,
+    ).to_dict()
+
+
+def normalize_threshold_payload(payload: dict[str, object]) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        raise GovernanceValidationError("Threshold payloads must be dictionaries.")
+    normalized_payload = dict(payload)
+    thresholds = normalized_payload.get("thresholds")
+    if not isinstance(thresholds, dict):
+        raise GovernanceValidationError("Threshold payloads must include a thresholds dictionary.")
+    normalized_thresholds: dict[str, object] = {}
+    for threshold_name, record in sorted(thresholds.items()):
+        if not isinstance(record, dict):
+            raise GovernanceValidationError(f"Threshold record '{threshold_name}' must be a dictionary.")
+        normalized_thresholds[threshold_name] = normalize_threshold_record(record)
+    normalized_payload["thresholds"] = normalized_thresholds
+    return normalized_payload
+
+
+def normalize_governed_promotion_record(
+    record: dict[str, object],
+    *,
+    decision_keys: Sequence[str] = ("decision", "promotion_decision"),
+) -> dict[str, object]:
+    if not isinstance(record, dict):
+        raise GovernanceValidationError("Governed promotion records must be dictionaries.")
+    normalized = _normalize_governed_promotion_record(record, decision_keys=decision_keys).to_dict(
+        legacy_source_names=LEGACY_NUISANCE_SOURCE_NAMES,
+        leakage_threshold=LEAKAGE_THRESHOLD,
+    )
+    if "promotion_decision" in record and "decision" not in record and "decision" in normalized:
+        normalized["promotion_decision"] = normalized.pop("decision")
+    return normalized
+
+
+def _normalize_governed_record_map(
+    records: object,
+    *,
+    decision_keys: Sequence[str] = ("decision", "promotion_decision"),
+) -> dict[str, object]:
+    if not isinstance(records, dict):
+        raise GovernanceValidationError("Governed record maps must be dictionaries.")
+    normalized: dict[str, object] = {}
+    for name, record in sorted(records.items()):
+        if not isinstance(record, dict):
+            raise GovernanceValidationError("Governed record maps must contain dictionaries.")
+        normalized[str(name)] = normalize_governed_promotion_record(record, decision_keys=decision_keys)
+    return normalized
+
+
+def _normalize_governed_record_list(
+    records: object,
+    *,
+    decision_keys: Sequence[str] = ("decision", "promotion_decision"),
+) -> list[dict[str, object]]:
+    if not isinstance(records, list):
+        raise GovernanceValidationError("Governed record collections must be lists.")
+    normalized: list[dict[str, object]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            raise GovernanceValidationError("Governed record collections must contain dictionaries.")
+        normalized.append(
+            normalize_governed_promotion_record(record, decision_keys=decision_keys)
+        )
+    return normalized
+
+
+def normalize_governed_artifact_payload(payload: dict[str, object]) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        raise GovernanceValidationError("Governed artifact payloads must be dictionaries.")
+    normalized = dict(payload)
+    if "thresholds" in normalized:
+        normalized = normalize_threshold_payload(normalized)
+    if "threshold_statuses" in normalized:
+        normalized["threshold_statuses"] = _normalize_governed_record_map(
+            normalized["threshold_statuses"],
+            decision_keys=("decision", "promotion_decision"),
+        )
+    if "entries" in normalized:
+        normalized["entries"] = _normalize_governed_record_list(
+            normalized["entries"],
+            decision_keys=("decision", "promotion_decision"),
+        )
+    if "decisions" in normalized:
+        normalized["decisions"] = _normalize_governed_record_list(
+            normalized["decisions"],
+            decision_keys=("decision", "promotion_decision"),
+        )
+    if "promotion_decisions" in normalized:
+        normalized["promotion_decisions"] = _normalize_governed_record_list(
+            normalized["promotion_decisions"],
+            decision_keys=("decision", "promotion_decision"),
+        )
+    if "promotion_history" in normalized:
+        if not isinstance(normalized["promotion_history"], list):
+            raise GovernanceValidationError("promotion_history must be a list.")
+        history: list[dict[str, object]] = []
+        for record in normalized["promotion_history"]:
+            if not isinstance(record, dict):
+                raise GovernanceValidationError("promotion_history must contain dictionaries.")
+            history.append(normalize_governed_artifact_payload(record))
+        normalized["promotion_history"] = history
+    if "global_thresholds" in normalized:
+        global_thresholds = normalized["global_thresholds"]
+        if not isinstance(global_thresholds, dict):
+            raise GovernanceValidationError("global_thresholds must be a dictionary.")
+        normalized["global_thresholds"] = {
+            str(name): normalize_threshold_record(record)
+            for name, record in sorted(global_thresholds.items())
+            if isinstance(record, dict)
+        }
+    if "tranches" in normalized:
+        tranches = normalized["tranches"]
+        if not isinstance(tranches, dict):
+            raise GovernanceValidationError("tranches must be a dictionary.")
+        normalized["tranches"] = {
+            str(name): normalize_threshold_payload(record)
+            for name, record in sorted(tranches.items())
+            if isinstance(record, dict)
+        }
+    if "contradictions" in normalized:
+        normalized["contradictions"] = [
+            item.to_dict() for item in _normalize_contradiction_records(normalized["contradictions"])
+        ]
+    return normalized
 
 
 def _stable_hash(payload: object) -> str:
@@ -882,7 +1327,9 @@ def _nuisance_audit(
             "mechanism_leakage_score": 0.0,
             "mechanism_leakage_sources": [],
             "nuisance_vector": nuisance_vector,
+            "dominant_axis": None,
             "nuisance_dominant_axis": None,
+            "entropy": 0.0,
             "nuisance_entropy": 0.0,
             "nuisance_sensitivity_summary": {},
             "leakage_blocking_reason": None,
@@ -900,7 +1347,9 @@ def _nuisance_audit(
             "mechanism_leakage_score": 0.0,
             "mechanism_leakage_sources": [],
             "nuisance_vector": nuisance_vector,
+            "dominant_axis": None,
             "nuisance_dominant_axis": None,
+            "entropy": 0.0,
             "nuisance_entropy": 0.0,
             "nuisance_sensitivity_summary": summary,
             "leakage_blocking_reason": None,
@@ -969,7 +1418,9 @@ def _nuisance_audit(
         "mechanism_leakage_score": max_score,
         "mechanism_leakage_sources": mechanism_leakage_sources,
         "nuisance_vector": nuisance_vector,
+        "dominant_axis": dominant_axis,
         "nuisance_dominant_axis": dominant_axis,
+        "entropy": entropy,
         "nuisance_entropy": entropy,
         "nuisance_sensitivity_summary": summary,
         "leakage_blocking_reason": BLOCKER_NUISANCE_DOMINANCE if blocking else None,
@@ -981,7 +1432,7 @@ def map_contradictions_to_outcome(
     contradictions: Sequence[dict[str, object]],
 ) -> PromotionGovernanceOutcome:
     contradiction_types = {
-        str(item.get("contradiction_type"))
+        _normalize_contradiction_type(item.get("contradiction_type"))
         for item in contradictions
         if isinstance(item, dict) and item.get("contradiction_type") is not None
     }
@@ -1066,16 +1517,19 @@ def adaptive_region_priority_terms(
         if region.transition_axis is not None and derivation_basis.get("source_axis") == region.transition_axis:
             matching_records.append(record)
     if not matching_records:
-        return {"support_density": 0.0, "support_confidence": 0.0}
+        return {"support_density": 0.0, "support_confidence": 0.0, "bounded_support_density": 0.0}
+    support_density = max(
+        float(record.get("support_density", record.get("admissibility_support_density", 0.0)))
+        for record in matching_records
+    )
+    support_confidence = min(
+        float(record.get("support_confidence", record.get("admissibility_support_confidence", 0.0)))
+        for record in matching_records
+    )
     return {
-        "support_density": max(
-            float(record.get("admissibility_support_density", 0.0))
-            for record in matching_records
-        ),
-        "support_confidence": min(
-            float(record.get("admissibility_support_confidence", 0.0))
-            for record in matching_records
-        ),
+        "support_density": support_density,
+        "support_confidence": support_confidence,
+        "bounded_support_density": min(support_density, max(0.25, support_confidence)),
     }
 
 
@@ -1127,10 +1581,15 @@ def _threshold_record(
         "normalization_basis_origin": normalization_basis["origin"],
         "normalization_basis_value": normalization_basis["value"],
         "normalization_basis_confidence": normalization_basis["confidence"],
+        "support_density": support_audit["admissibility_support_density"],
+        "support_span": support_audit["admissibility_support_span"],
+        "support_confidence": support_audit["admissibility_support_confidence"],
         "admissibility_support_density": support_audit["admissibility_support_density"],
         "admissibility_support_span": support_audit["admissibility_support_span"],
         "admissibility_support_confidence": support_audit["admissibility_support_confidence"],
         "nuisance_vector": dict(nuisance_audit["nuisance_vector"]),
+        "dominant_axis": nuisance_audit["dominant_axis"],
+        "entropy": nuisance_audit["entropy"],
         "nuisance_dominant_axis": nuisance_audit["nuisance_dominant_axis"],
         "nuisance_entropy": nuisance_audit["nuisance_entropy"],
         "monotonicity_violation": monotonicity_violation,
@@ -1172,6 +1631,7 @@ def _threshold_record(
                 "promotion_governance_outcome": governance_outcome.value,
             },
         }
+        threshold_record = normalize_threshold_record(threshold_record)
         ledger_entry = {
             "threshold": spec.name,
             "symbol": spec.symbol,
@@ -1182,6 +1642,15 @@ def _threshold_record(
             "normalization_basis_origin": normalization_basis["origin"],
             "promotion_blockers": [PROMOTION_LOW_CONFIDENCE],
             "promotion_governance_outcome": governance_outcome.value,
+            "support_density": threshold_record["support_density"],
+            "support_span": threshold_record["support_span"],
+            "support_confidence": threshold_record["support_confidence"],
+            "nuisance_vector": dict(threshold_record["nuisance_vector"]),
+            "dominant_axis": threshold_record["dominant_axis"],
+            "entropy": threshold_record["entropy"],
+            "monotonicity_violation": threshold_record["monotonicity_violation"],
+            "monotonicity_block_reason": threshold_record["monotonicity_block_reason"],
+            "contradictions": list(threshold_record["contradictions"]),
         }
         promotion_decision = {
             "threshold": spec.name,
@@ -1193,6 +1662,15 @@ def _threshold_record(
             "reason": "No evidence candidate available.",
             "promotion_blockers": [PROMOTION_LOW_CONFIDENCE],
             "promotion_governance_outcome": governance_outcome.value,
+            "support_density": threshold_record["support_density"],
+            "support_span": threshold_record["support_span"],
+            "support_confidence": threshold_record["support_confidence"],
+            "dominant_axis": threshold_record["dominant_axis"],
+            "entropy": threshold_record["entropy"],
+            "nuisance_vector": dict(threshold_record["nuisance_vector"]),
+            "monotonicity_violation": threshold_record["monotonicity_violation"],
+            "monotonicity_block_reason": threshold_record["monotonicity_block_reason"],
+            "contradictions": list(threshold_record["contradictions"]),
         }
         return threshold_record, ledger_entry, promotion_decision
 
@@ -1425,6 +1903,7 @@ def _threshold_record(
             "tranche_requirements_met": promotable,
         },
     }
+    threshold_record = normalize_threshold_record(threshold_record)
     ledger_entry = {
         "threshold": spec.name,
         "symbol": spec.symbol,
@@ -1454,12 +1933,19 @@ def _threshold_record(
         "confidence_metric": confidence,
         "mechanism_leakage_score": nuisance_audit["mechanism_leakage_score"],
         "mechanism_leakage_sources": list(nuisance_audit["mechanism_leakage_sources"]),
+        "support_density": threshold_record["support_density"],
+        "support_span": threshold_record["support_span"],
+        "support_confidence": threshold_record["support_confidence"],
         "admissibility_support_density": support_audit["admissibility_support_density"],
         "admissibility_support_confidence": support_audit["admissibility_support_confidence"],
+        "nuisance_vector": dict(threshold_record["nuisance_vector"]),
+        "dominant_axis": threshold_record["dominant_axis"],
+        "entropy": threshold_record["entropy"],
         "nuisance_dominant_axis": nuisance_audit["nuisance_dominant_axis"],
         "nuisance_entropy": nuisance_audit["nuisance_entropy"],
         "monotonicity_violation": monotonicity_violation,
         "monotonicity_block_reason": monotonicity_block_reason,
+        "contradictions": list(threshold_record["contradictions"]),
     }
     promotion_decision = {
         "threshold": spec.name,
@@ -1482,15 +1968,20 @@ def _threshold_record(
         "promotion_blockers": promotion_blockers,
         "mechanism_leakage_score": nuisance_audit["mechanism_leakage_score"],
         "mechanism_leakage_sources": list(nuisance_audit["mechanism_leakage_sources"]),
+        "support_density": threshold_record["support_density"],
+        "support_span": threshold_record["support_span"],
+        "support_confidence": threshold_record["support_confidence"],
         "promotion_governance_outcome": governance_outcome.value,
         "admissibility_support_density": support_audit["admissibility_support_density"],
         "admissibility_support_confidence": support_audit["admissibility_support_confidence"],
         "nuisance_vector": dict(nuisance_audit["nuisance_vector"]),
+        "dominant_axis": threshold_record["dominant_axis"],
+        "entropy": threshold_record["entropy"],
         "nuisance_dominant_axis": nuisance_audit["nuisance_dominant_axis"],
         "nuisance_entropy": nuisance_audit["nuisance_entropy"],
         "monotonicity_violation": monotonicity_violation,
         "monotonicity_block_reason": monotonicity_block_reason,
-        "contradictions": contradictions,
+        "contradictions": list(threshold_record["contradictions"]),
     }
     return threshold_record, ledger_entry, promotion_decision
 
@@ -1529,7 +2020,8 @@ def build_threshold_estimates(
         threshold_ledger.append(ledger_entry)
         promotion_decisions.append(promotion_decision)
 
-    return {
+    return normalize_governed_artifact_payload(
+        {
         "analysis_contract_version": 2,
         "tranche_name": tranche_name,
         "scope": "local_tranche",
@@ -1539,7 +2031,8 @@ def build_threshold_estimates(
         "thresholds": thresholds,
         "threshold_ledger": threshold_ledger,
         "promotion_decisions": promotion_decisions,
-    }
+        }
+    )
 
 
 def _aggregate_span(values: Sequence[float]) -> tuple[float, float, float]:
@@ -1571,7 +2064,7 @@ def _contradiction_record(
     return {
         "threshold": spec.name,
         "symbol": spec.symbol,
-        "contradiction_type": contradiction_type,
+        "contradiction_type": _normalize_contradiction_type(contradiction_type),
         "contradiction_severity": severity,
         "threshold_ids_involved": list(threshold_ids_involved),
         "affected_tranches": list(affected_tranches),
@@ -1589,6 +2082,34 @@ def _cross_tranche_record(
     promotable_records = [(name, record) for name, record in numeric_records if bool(record.get("promotion_state", {}).get("promoted"))]
     findings: list[dict[str, object]] = []
     contradictions: list[dict[str, object]] = []
+    aggregated_nuisance_vector = {
+        axis: max(
+            (float(record.get("nuisance_vector", {}).get(axis, 0.0)) for _name, record in local_records),
+            default=0.0,
+        )
+        for axis, _factor in NUISANCE_AXIS_FACTORS
+    }
+    aggregated_dominant_axis = None
+    if aggregated_nuisance_vector:
+        max_score = _max_nuisance_score(aggregated_nuisance_vector)
+        if max_score > 0.0:
+            aggregated_dominant_axis = sorted(
+                aggregated_nuisance_vector.items(),
+                key=lambda item: (-float(item[1]), item[0]),
+            )[0][0]
+    aggregated_entropy = _nuisance_entropy(aggregated_nuisance_vector)
+    monotonicity_reasons = sorted(
+        {
+            str(record.get("monotonicity_block_reason"))
+            for _name, record in local_records
+            if isinstance(record.get("monotonicity_block_reason"), str)
+        }
+    )
+    monotonicity_violation = any(bool(record.get("monotonicity_violation")) for _name, record in local_records)
+    mechanism_leakage_score, mechanism_leakage_sources = _derive_nuisance_legacy_fields(
+        aggregated_nuisance_vector,
+        aggregated_dominant_axis,
+    )
 
     normalization_basis = _derive_cross_tranche_basis(spec, promotable_records or numeric_records)
     global_threshold_id = _threshold_id(spec, scope="global")
@@ -1610,6 +2131,20 @@ def _cross_tranche_record(
             "estimate_scope": "global_candidate",
             "epistemic_note": EPISTEMIC_NOTE,
             "supporting_tranches": [],
+            "support_density": 0.0,
+            "support_span": 0.0,
+            "support_confidence": 0.0,
+            "nuisance_vector": aggregated_nuisance_vector,
+            "dominant_axis": aggregated_dominant_axis,
+            "entropy": aggregated_entropy,
+            "nuisance_dominant_axis": aggregated_dominant_axis,
+            "nuisance_entropy": aggregated_entropy,
+            "monotonicity_violation": monotonicity_violation,
+            "monotonicity_block_reason": (
+                ",".join(monotonicity_reasons) if monotonicity_reasons else None
+            ),
+            "mechanism_leakage_score": mechanism_leakage_score,
+            "mechanism_leakage_sources": mechanism_leakage_sources,
             "promotion_blockers": [PROMOTION_LOW_CONFIDENCE],
             "threshold_promotion_decision": PROMOTION_LOW_CONFIDENCE,
             "replay_hash_provenance": {"threshold_replay_hash": None, "supporting_threshold_hashes": []},
@@ -1622,6 +2157,7 @@ def _cross_tranche_record(
             },
             "contradictions": [],
         }
+        record = normalize_threshold_record(record)
         decision = {
             "threshold": spec.name,
             "symbol": spec.symbol,
@@ -1634,6 +2170,15 @@ def _cross_tranche_record(
             "supporting_tranches": [],
             "promotion_blockers": [PROMOTION_LOW_CONFIDENCE],
             "promotion_governance_outcome": governance_outcome.value,
+            "support_density": record["support_density"],
+            "support_span": record["support_span"],
+            "support_confidence": record["support_confidence"],
+            "nuisance_vector": dict(record["nuisance_vector"]),
+            "dominant_axis": record["dominant_axis"],
+            "entropy": record["entropy"],
+            "monotonicity_violation": record["monotonicity_violation"],
+            "monotonicity_block_reason": record["monotonicity_block_reason"],
+            "contradictions": list(record["contradictions"]),
         }
         return record, findings, contradictions, decision
 
@@ -1854,9 +2399,42 @@ def _cross_tranche_record(
         "epistemic_note": EPISTEMIC_NOTE,
         "supporting_tranches": supporting_tranches,
         "support_count": len(numeric_records),
+        "support_density": max(
+            [float(record.get("support_density", 0.0)) for _name, record in local_records],
+            default=0.0,
+        ),
+        "support_span": max(
+            [float(record.get("support_span", 0.0)) for _name, record in local_records],
+            default=0.0,
+        ),
+        "support_confidence": min(
+            [float(record.get("support_confidence", 0.0)) for _name, record in local_records],
+            default=0.0,
+        ),
+        "admissibility_support_density": max(
+            [float(record.get("support_density", 0.0)) for _name, record in local_records],
+            default=0.0,
+        ),
+        "admissibility_support_span": max(
+            [float(record.get("support_span", 0.0)) for _name, record in local_records],
+            default=0.0,
+        ),
+        "admissibility_support_confidence": min(
+            [float(record.get("support_confidence", 0.0)) for _name, record in local_records],
+            default=0.0,
+        ),
+        "nuisance_vector": aggregated_nuisance_vector,
+        "dominant_axis": aggregated_dominant_axis,
+        "entropy": aggregated_entropy,
+        "nuisance_dominant_axis": aggregated_dominant_axis,
+        "nuisance_entropy": aggregated_entropy,
+        "monotonicity_violation": monotonicity_violation,
+        "monotonicity_block_reason": ",".join(monotonicity_reasons) if monotonicity_reasons else None,
         "supporting_local_statuses": {name: record["status"] for name, record in numeric_records},
         "promotion_blockers": promotion_blockers,
         "threshold_promotion_decision": threshold_promotion_decision,
+        "mechanism_leakage_score": mechanism_leakage_score,
+        "mechanism_leakage_sources": mechanism_leakage_sources,
         "replay_hash_provenance": {"threshold_replay_hash": _stable_hash({"threshold_name": spec.name, "supporting_threshold_hashes": threshold_hashes, "supporting_tranches": supporting_tranches, "lower_bound": lower_bound, "upper_bound": upper_bound, "threshold_promotion_decision": threshold_promotion_decision}), "supporting_threshold_hashes": threshold_hashes},
         "promotion_governance_outcome": governance_outcome.value,
         "promotion_state": {
@@ -1867,6 +2445,7 @@ def _cross_tranche_record(
         },
         "contradictions": contradictions,
     }
+    record = normalize_threshold_record(record)
     promotion_decision = {
         "threshold": spec.name,
         "symbol": spec.symbol,
@@ -1883,11 +2462,24 @@ def _cross_tranche_record(
         "promotion_blockers": promotion_blockers,
         "normalization_basis_origin": normalization_basis["origin"],
         "promotion_governance_outcome": governance_outcome.value,
+        "support_density": record["support_density"],
+        "support_span": record["support_span"],
+        "support_confidence": record["support_confidence"],
+        "nuisance_vector": dict(record["nuisance_vector"]),
+        "dominant_axis": record["dominant_axis"],
+        "entropy": record["entropy"],
+        "monotonicity_violation": record["monotonicity_violation"],
+        "monotonicity_block_reason": record["monotonicity_block_reason"],
+        "contradictions": list(record["contradictions"]),
     }
     return record, findings, contradictions, promotion_decision
 
 
 def build_cross_tranche_thresholds(tranche_thresholds: dict[str, dict[str, object]]) -> dict[str, object]:
+    normalized_tranche_thresholds = {
+        tranche_name: normalize_threshold_payload(payload)
+        for tranche_name, payload in sorted(tranche_thresholds.items())
+    }
     aggregate: dict[str, dict[str, object]] = {}
     global_thresholds: dict[str, object] = {}
     threshold_ledger: list[dict[str, object]] = []
@@ -1897,7 +2489,7 @@ def build_cross_tranche_thresholds(tranche_thresholds: dict[str, dict[str, objec
 
     for spec in THRESHOLD_SPECS:
         local_records = []
-        for tranche_name, payload in sorted(tranche_thresholds.items()):
+        for tranche_name, payload in normalized_tranche_thresholds.items():
             thresholds = payload.get("thresholds", {})
             if not isinstance(thresholds, dict):
                 continue
@@ -1923,10 +2515,19 @@ def build_cross_tranche_thresholds(tranche_thresholds: dict[str, dict[str, objec
                 "lower_bound": global_record.get("lower_bound"),
                 "upper_bound": global_record.get("upper_bound"),
                 "supporting_tranches": global_record["supporting_tranches"],
+                "support_density": global_record.get("support_density"),
+                "support_span": global_record.get("support_span"),
+                "support_confidence": global_record.get("support_confidence"),
+                "nuisance_vector": global_record.get("nuisance_vector"),
+                "dominant_axis": global_record.get("dominant_axis"),
+                "entropy": global_record.get("entropy"),
+                "monotonicity_violation": global_record.get("monotonicity_violation"),
+                "monotonicity_block_reason": global_record.get("monotonicity_block_reason"),
                 "promotion_decision": global_record["promotion_state"]["decision"],
                 "threshold_promotion_decision": global_record.get("threshold_promotion_decision"),
                 "promotion_blockers": global_record.get("promotion_blockers", []),
                 "promotion_governance_outcome": global_record.get("promotion_governance_outcome"),
+                "contradictions": global_record.get("contradictions", []),
             }
         )
         promotion_decisions.append(promotion_decision)
@@ -1946,18 +2547,20 @@ def build_cross_tranche_thresholds(tranche_thresholds: dict[str, dict[str, objec
                 "supporting_tranches": [tranche_name for tranche_name, _estimate in numeric_values],
             }
 
-    return {
+    return normalize_governed_artifact_payload(
+        {
         "analysis_contract_version": 2,
         "scope": "cross_tranche",
         "epistemic_note": EPISTEMIC_NOTE,
-        "tranches": tranche_thresholds,
+        "tranches": normalized_tranche_thresholds,
         "global_thresholds": global_thresholds,
         "aggregate": aggregate,
         "threshold_ledger": threshold_ledger,
         "promotion_decisions": promotion_decisions,
         "consistency_findings": consistency_findings,
         "contradictions": contradictions,
-    }
+        }
+    )
 
 
 def build_admissibility_overlay(tranche_name: str, points: Sequence[PhasePoint]) -> dict[str, object]:

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import copy
 from collections import Counter
 from dataclasses import dataclass, field
 from enum import StrEnum
 from hashlib import sha256
 import json
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterator, Mapping
 
 if TYPE_CHECKING:
     from avn.sweep_analysis import TrancheSliceResult
@@ -74,6 +75,233 @@ class PromotionGovernanceOutcome(StrEnum):
     ALLOW = "ALLOW"
     LOCAL_BLOCK = "LOCAL_BLOCK"
     GLOBAL_BLOCK = "GLOBAL_BLOCK"
+
+
+def derive_mechanism_leakage_fields(
+    nuisance_vector: Mapping[str, float],
+    dominant_axis: str | None,
+    *,
+    legacy_source_names: Mapping[str, str],
+    leakage_threshold: float,
+) -> tuple[float, list[str]]:
+    max_score = max((float(value) for value in nuisance_vector.values()), default=0.0)
+    resolved_axis = dominant_axis
+    if resolved_axis is None and nuisance_vector:
+        resolved_axis = sorted(
+            nuisance_vector.items(),
+            key=lambda item: (-float(item[1]), item[0]),
+        )[0][0]
+    legacy_sources = sorted(
+        legacy_source_names[axis]
+        for axis, score in nuisance_vector.items()
+        if axis in legacy_source_names and score > 0.0 and (axis == resolved_axis or score >= leakage_threshold)
+    )
+    return max_score, legacy_sources
+
+
+def governed_compatibility_fields(
+    *,
+    support_density: float,
+    support_span: float,
+    support_confidence: float,
+    nuisance_vector: Mapping[str, float],
+    dominant_axis: str | None,
+    entropy: float,
+    legacy_source_names: Mapping[str, str],
+    leakage_threshold: float,
+) -> dict[str, object]:
+    mechanism_leakage_score, mechanism_leakage_sources = derive_mechanism_leakage_fields(
+        nuisance_vector,
+        dominant_axis,
+        legacy_source_names=legacy_source_names,
+        leakage_threshold=leakage_threshold,
+    )
+    return {
+        "admissibility_support_density": support_density,
+        "admissibility_support_span": support_span,
+        "admissibility_support_confidence": support_confidence,
+        "nuisance_dominant_axis": dominant_axis,
+        "nuisance_entropy": entropy,
+        "mechanism_leakage_score": mechanism_leakage_score,
+        "mechanism_leakage_sources": mechanism_leakage_sources,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class GovernedContradictionRecord:
+    contradiction_type: str
+    extra_fields: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if "contradiction_type" in self.extra_fields:
+            raise ValueError("GovernedContradictionRecord extra_fields must not shadow contradiction_type.")
+
+    def to_dict(self) -> dict[str, object]:
+        payload = copy.deepcopy(self.extra_fields)
+        payload["contradiction_type"] = self.contradiction_type
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class GovernedPromotionState:
+    promoted: bool
+    decision: str
+    promotion_governance_outcome: str
+    extra_fields: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        shadowed = {"promoted", "decision", "promotion_governance_outcome"}.intersection(self.extra_fields)
+        if shadowed:
+            raise ValueError(
+                f"GovernedPromotionState extra_fields must not shadow authoritative fields: {sorted(shadowed)}."
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        payload = copy.deepcopy(self.extra_fields)
+        payload.update(
+            {
+                "promoted": self.promoted,
+                "decision": self.decision,
+                "promotion_governance_outcome": self.promotion_governance_outcome,
+            }
+        )
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class GovernedPromotionRecord:
+    support_density: float
+    support_span: float
+    support_confidence: float
+    nuisance_vector: dict[str, float]
+    dominant_axis: str | None
+    entropy: float
+    monotonicity_violation: bool
+    monotonicity_block_reason: str | None
+    contradictions: tuple[GovernedContradictionRecord, ...]
+    promotion_governance_outcome: str
+    decision: str | None = None
+    extra_fields: dict[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        shadowed = {
+            "support_density",
+            "support_span",
+            "support_confidence",
+            "nuisance_vector",
+            "dominant_axis",
+            "entropy",
+            "monotonicity_violation",
+            "monotonicity_block_reason",
+            "contradictions",
+            "promotion_governance_outcome",
+            "decision",
+            "admissibility_support_density",
+            "admissibility_support_span",
+            "admissibility_support_confidence",
+            "nuisance_dominant_axis",
+            "nuisance_entropy",
+            "mechanism_leakage_score",
+            "mechanism_leakage_sources",
+        }.intersection(self.extra_fields)
+        if shadowed:
+            raise ValueError(
+                f"GovernedPromotionRecord extra_fields must not shadow authoritative or derived fields: {sorted(shadowed)}."
+            )
+
+    def to_dict(
+        self,
+        *,
+        legacy_source_names: Mapping[str, str],
+        leakage_threshold: float,
+    ) -> dict[str, object]:
+        payload = copy.deepcopy(self.extra_fields)
+        payload.update(
+            {
+                "support_density": self.support_density,
+                "support_span": self.support_span,
+                "support_confidence": self.support_confidence,
+                "nuisance_vector": dict(self.nuisance_vector),
+                "dominant_axis": self.dominant_axis,
+                "entropy": self.entropy,
+                "monotonicity_violation": self.monotonicity_violation,
+                "monotonicity_block_reason": self.monotonicity_block_reason,
+                "contradictions": [item.to_dict() for item in self.contradictions],
+                "promotion_governance_outcome": self.promotion_governance_outcome,
+            }
+        )
+        if self.decision is not None:
+            payload["decision"] = self.decision
+        payload.update(
+            governed_compatibility_fields(
+                support_density=self.support_density,
+                support_span=self.support_span,
+                support_confidence=self.support_confidence,
+                nuisance_vector=self.nuisance_vector,
+                dominant_axis=self.dominant_axis,
+                entropy=self.entropy,
+                legacy_source_names=legacy_source_names,
+                leakage_threshold=leakage_threshold,
+            )
+        )
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class GovernedThresholdRecord(Mapping[str, object]):
+    promotion_record: GovernedPromotionRecord
+    promotion_state: GovernedPromotionState
+    extra_fields: dict[str, object] = field(default_factory=dict)
+    legacy_source_names: dict[str, str] = field(default_factory=dict)
+    leakage_threshold: float = 0.0
+
+    def __post_init__(self) -> None:
+        shadowed = {
+            "promotion_state",
+            "support_density",
+            "support_span",
+            "support_confidence",
+            "nuisance_vector",
+            "dominant_axis",
+            "entropy",
+            "monotonicity_violation",
+            "monotonicity_block_reason",
+            "contradictions",
+            "promotion_governance_outcome",
+            "decision",
+            "admissibility_support_density",
+            "admissibility_support_span",
+            "admissibility_support_confidence",
+            "nuisance_dominant_axis",
+            "nuisance_entropy",
+            "mechanism_leakage_score",
+            "mechanism_leakage_sources",
+        }.intersection(self.extra_fields)
+        if shadowed:
+            raise ValueError(
+                f"GovernedThresholdRecord extra_fields must not shadow authoritative or derived fields: {sorted(shadowed)}."
+            )
+
+    def to_dict(self) -> dict[str, object]:
+        payload = self.promotion_record.to_dict(
+            legacy_source_names=self.legacy_source_names,
+            leakage_threshold=self.leakage_threshold,
+        )
+        payload.update(copy.deepcopy(self.extra_fields))
+        payload["promotion_state"] = self.promotion_state.to_dict()
+        return payload
+
+    def __getitem__(self, key: str) -> object:
+        return self.to_dict()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.to_dict())
+
+    def __len__(self) -> int:
+        return len(self.to_dict())
+
+    def get(self, key: str, default: object = None) -> object:
+        return self.to_dict().get(key, default)
 
 
 def _coerce_numeric_param(value: object) -> float | None:

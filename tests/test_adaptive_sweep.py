@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
+
+import pytest
 
 from avn.phase_space.convergence import build_convergence_report
 from avn.phase_space.models import (
@@ -15,10 +18,12 @@ from avn.phase_space.thresholds import (
     build_cross_tranche_thresholds,
     build_threshold_estimates,
     map_contradictions_to_outcome,
+    normalize_governed_artifact_payload,
+    normalize_threshold_payload,
 )
 from avn.phase_space.transitions import detect_transition_regions
 from avn.sweep import TrancheRunResult, analyze_only, main
-from avn.sweep_adaptive import adaptive_sweep
+from avn.sweep_adaptive import _refinement_parameter_sets, adaptive_sweep
 from avn.sweep_analysis import (
     ArtifactPaths,
     CommsMetricsSnapshot,
@@ -26,6 +31,11 @@ from avn.sweep_analysis import (
     ThroughputMetricsSnapshot,
     TrancheSliceResult,
     TrustMetricsSnapshot,
+    build_phase_space_outputs,
+    write_contradictions_json,
+    write_cross_tranche_promotion_decisions_json,
+    write_cross_tranche_threshold_ledger_json,
+    write_cross_tranche_thresholds_json,
     write_promotion_decisions_json,
     write_slice_results_json,
     write_threshold_estimates_json,
@@ -189,6 +199,91 @@ def _synthetic_tranche(tmp_path: Path) -> TrancheDefinition:
     )
 
 
+def _canonical_round_trip(payload: dict[str, object]) -> dict[str, object]:
+    normalized = normalize_governed_artifact_payload(payload)
+    renormalized = normalize_governed_artifact_payload(
+        json.loads(json.dumps(normalized, sort_keys=True))
+    )
+    assert renormalized == normalized
+    return normalized
+
+
+def _governed_round_trip_results(tmp_path: Path, tranche_name: str) -> list[TrancheSliceResult]:
+    slice_definitions = [
+        TrancheSlice(
+            slice_id=f"{tranche_name}_a",
+            tranche_name=tranche_name,
+            seed=1,
+            resolved_params={"modifiers.demand_multiplier": 1.0},
+            base_config_path=tmp_path / "synthetic.toml",
+        ),
+        TrancheSlice(
+            slice_id=f"{tranche_name}_b",
+            tranche_name=tranche_name,
+            seed=2,
+            resolved_params={"modifiers.demand_multiplier": 1.4},
+            base_config_path=tmp_path / "synthetic.toml",
+        ),
+        TrancheSlice(
+            slice_id=f"{tranche_name}_c",
+            tranche_name=tranche_name,
+            seed=3,
+            resolved_params={"modifiers.demand_multiplier": 1.8},
+            base_config_path=tmp_path / "synthetic.toml",
+        ),
+        TrancheSlice(
+            slice_id=f"{tranche_name}_d",
+            tranche_name=tranche_name,
+            seed=4,
+            resolved_params={"modifiers.demand_multiplier": 2.0},
+            base_config_path=tmp_path / "synthetic.toml",
+        ),
+    ]
+    return [
+        _result_for_slice(tmp_path, tranche_name=tranche_name, slice_definition=slice_definitions[0], mechanism="corridor_capacity_exceeded", force_admissible=True),
+        _result_for_slice(tmp_path, tranche_name=tranche_name, slice_definition=slice_definitions[1], mechanism="corridor_capacity_exceeded", force_admissible=True),
+        _result_for_slice(tmp_path, tranche_name=tranche_name, slice_definition=slice_definitions[2], mechanism="node_service_collapse", force_admissible=True),
+        _result_for_slice(tmp_path, tranche_name=tranche_name, slice_definition=slice_definitions[3], mechanism="node_service_collapse", force_admissible=True),
+    ]
+
+
+def _base_governed_threshold_payload() -> dict[str, object]:
+    return {
+        "thresholds": {
+            "rho_c": {
+                "threshold_id": "local_tranche:synthetic:rho_c",
+                "symbol": "rho",
+                "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
+                "estimate": 1.1,
+                "lower_bound": 1.0,
+                "upper_bound": 1.2,
+                "support_density": 0.8,
+                "support_span": 0.2,
+                "support_confidence": 0.7,
+                "nuisance_vector": {
+                    "congestion": 0.0,
+                    "trust": 0.4,
+                    "comms": 0.0,
+                    "navigation": 0.0,
+                    "weather": 0.0,
+                    "contingency": 0.0,
+                },
+                "dominant_axis": "trust",
+                "entropy": 0.0,
+                "monotonicity_violation": False,
+                "monotonicity_block_reason": None,
+                "contradictions": [],
+                "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                "promotion_state": {
+                    "promoted": False,
+                    "decision": "retained_as_proxy_only",
+                    "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                },
+            }
+        }
+    }
+
+
 def test_detect_transition_regions_on_synthetic_data(tmp_path: Path) -> None:
     tranche_name = "load"
     results = [
@@ -270,6 +365,90 @@ def test_adaptive_sweep_refines_deterministically(tmp_path: Path) -> None:
     assert run_a.adaptive_payload == run_b.adaptive_payload
     assert len(run_a.adaptive_payload["iterations"]) >= 2
     assert len(run_a.slice_results) > 3
+
+
+def test_adaptive_refinement_bounds_dense_ambiguous_regions(tmp_path: Path) -> None:
+    tranche = _synthetic_tranche(tmp_path)
+    dense_region = PhaseRegion(
+        bounds={"alpha": (0.2, 0.4)},
+        dominant_mechanism="NODE_SATURATION",
+        entropy=0.2,
+        sample_density=1.0,
+        transition_axis="alpha",
+        local_disagreement=0.2,
+        local_gradient=0.2,
+        replay_hash="dense",
+    )
+    sparse_region = PhaseRegion(
+        bounds={"alpha": (0.7, 0.9)},
+        dominant_mechanism="NODE_SATURATION",
+        entropy=0.3,
+        sample_density=0.5,
+        transition_axis="alpha",
+        local_disagreement=0.3,
+        local_gradient=0.3,
+        replay_hash="sparse",
+    )
+    threshold_payload = {
+        "thresholds": {
+            "rho_c": {
+                "threshold_id": "local_tranche:synthetic:rho_c",
+                "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
+                "estimate": 0.3,
+                "lower_bound": 0.2,
+                "upper_bound": 0.4,
+                "support_density": 1.0,
+                "support_span": 0.2,
+                "support_confidence": 0.0,
+                "nuisance_vector": {"congestion": 0.0, "trust": 0.0, "comms": 0.0, "navigation": 0.0, "weather": 0.0, "contingency": 0.0},
+                "dominant_axis": None,
+                "entropy": 0.0,
+                "monotonicity_violation": False,
+                "monotonicity_block_reason": None,
+                "contradictions": [],
+                "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                "promotion_state": {
+                    "promoted": False,
+                    "decision": "retained_as_proxy_only",
+                    "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                },
+                "derivation_basis": {"source_axis": "alpha", "source_replay_hash": "dense"},
+            },
+            "lambda_c": {
+                "threshold_id": "local_tranche:synthetic:lambda_c",
+                "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
+                "estimate": 0.8,
+                "lower_bound": 0.7,
+                "upper_bound": 0.9,
+                "support_density": 0.6,
+                "support_span": 0.2,
+                "support_confidence": 1.0,
+                "nuisance_vector": {"congestion": 0.0, "trust": 0.0, "comms": 0.0, "navigation": 0.0, "weather": 0.0, "contingency": 0.0},
+                "dominant_axis": None,
+                "entropy": 0.0,
+                "monotonicity_violation": False,
+                "monotonicity_block_reason": None,
+                "contradictions": [],
+                "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                "promotion_state": {
+                    "promoted": True,
+                    "decision": "promoted_to_tranche_boundary",
+                    "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                },
+                "derivation_basis": {"source_axis": "alpha", "source_replay_hash": "sparse"},
+            },
+        }
+    }
+
+    selected = _refinement_parameter_sets(
+        tranche,
+        [dense_region, sparse_region],
+        threshold_payload=threshold_payload,
+        executed_slice_ids=set(),
+        limit=1,
+    )
+
+    assert selected == [{"alpha": 0.8}]
 
 
 def test_convergence_stopping_condition() -> None:
@@ -843,6 +1022,124 @@ def test_contradiction_mapping_is_deterministic() -> None:
     assert map_contradictions_to_outcome([]) == PromotionGovernanceOutcome.ALLOW
 
 
+def test_legacy_contradiction_strings_normalize_to_deterministic_outcome() -> None:
+    normalized = normalize_threshold_payload(
+        {
+            "thresholds": {
+                "rho_c": {
+                    "threshold_id": "local_tranche:legacy:rho_c",
+                    "symbol": "rho",
+                    "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
+                    "estimate": 1.1,
+                    "lower_bound": 1.0,
+                    "upper_bound": 1.2,
+                    "support_density": 0.8,
+                    "support_span": 0.2,
+                    "support_confidence": 0.7,
+                    "nuisance_vector": {
+                        "congestion": 0.0,
+                        "trust": 0.6,
+                        "comms": 0.0,
+                        "navigation": 0.0,
+                        "weather": 0.0,
+                        "contingency": 0.0,
+                    },
+                    "dominant_axis": "trust",
+                    "entropy": 0.0,
+                    "monotonicity_violation": False,
+                    "monotonicity_block_reason": None,
+                    "contradictions": [{"contradiction_type": "non-monotonicity"}],
+                    "promotion_state": {
+                        "promoted": False,
+                        "decision": "retained_as_mixed_non_monotonic",
+                        "promotion_governance_outcome": PromotionGovernanceOutcome.LOCAL_BLOCK.value,
+                    },
+                }
+            }
+        }
+    )
+
+    rho_record = normalized["thresholds"]["rho_c"]
+    assert rho_record["contradictions"][0]["contradiction_type"] == "NON_MONOTONIC_THRESHOLD"
+    assert rho_record["promotion_governance_outcome"] == PromotionGovernanceOutcome.LOCAL_BLOCK.value
+
+
+def test_missing_governance_fields_fail_closed() -> None:
+    with pytest.raises(ValueError, match="nuisance_vector"):
+        normalize_threshold_payload(
+            {
+                "thresholds": {
+                    "rho_c": {
+                        "threshold_id": "local_tranche:bad:rho_c",
+                        "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
+                        "estimate": 1.0,
+                        "lower_bound": 0.9,
+                        "upper_bound": 1.1,
+                        "support_density": 0.6,
+                        "support_span": 0.2,
+                        "support_confidence": 0.6,
+                        "entropy": 0.5,
+                        "monotonicity_violation": False,
+                        "monotonicity_block_reason": None,
+                        "contradictions": [],
+                        "promotion_state": {
+                            "promoted": False,
+                            "decision": "retained",
+                            "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        },
+                    }
+                }
+            }
+        )
+
+
+def test_conflicting_support_aliases_fail_closed() -> None:
+    payload = _base_governed_threshold_payload()
+    payload["thresholds"]["rho_c"]["admissibility_support_density"] = 0.4
+
+    with pytest.raises(ValueError, match="support_density"):
+        normalize_threshold_payload(payload)
+
+
+def test_conflicting_nuisance_aliases_fail_closed() -> None:
+    payload = _base_governed_threshold_payload()
+    payload["thresholds"]["rho_c"]["nuisance_dominant_axis"] = "weather"
+
+    with pytest.raises(ValueError, match="dominant_axis"):
+        normalize_threshold_payload(payload)
+
+
+def test_entropy_alias_mismatch_fails_closed() -> None:
+    payload = _base_governed_threshold_payload()
+    payload["thresholds"]["rho_c"]["nuisance_entropy"] = 0.5
+
+    with pytest.raises(ValueError, match="entropy"):
+        normalize_threshold_payload(payload)
+
+
+def test_contradiction_outcome_mismatch_fails_closed() -> None:
+    payload = _base_governed_threshold_payload()
+    payload["thresholds"]["rho_c"]["contradictions"] = [
+        {"contradiction_type": "NON_MONOTONIC_THRESHOLD"}
+    ]
+    payload["thresholds"]["rho_c"]["promotion_governance_outcome"] = PromotionGovernanceOutcome.ALLOW.value
+    payload["thresholds"]["rho_c"]["promotion_state"]["promotion_governance_outcome"] = (
+        PromotionGovernanceOutcome.ALLOW.value
+    )
+
+    with pytest.raises(ValueError, match="promotion_governance_outcome"):
+        normalize_threshold_payload(payload)
+
+
+def test_derived_leakage_tampering_fails_closed() -> None:
+    payload = _base_governed_threshold_payload()
+    payload["thresholds"]["rho_c"]["mechanism_leakage_score"] = 0.9
+    payload["thresholds"]["rho_c"]["mechanism_leakage_sources"] = ["weather_severity"]
+
+    with pytest.raises(ValueError, match="mechanism_leakage"):
+        normalize_threshold_payload(payload)
+
+
 def test_monotonicity_violation_blocks_promotion(tmp_path: Path) -> None:
     current_results = [
         _result_for_slice(
@@ -937,6 +1234,66 @@ def test_monotonicity_violation_blocks_promotion(tmp_path: Path) -> None:
     assert lambda_record["promotion_governance_outcome"] == PromotionGovernanceOutcome.LOCAL_BLOCK.value
 
 
+def test_replay_corruption_is_detected_and_rejected(tmp_path: Path) -> None:
+    tranche = _synthetic_tranche(tmp_path)
+    results = [
+        _result_for_slice(
+            tmp_path,
+            tranche_name=tranche.tranche_name,
+            slice_definition=TrancheSlice(
+                slice_id="a",
+                tranche_name=tranche.tranche_name,
+                seed=1,
+                resolved_params={"alpha": 0.0},
+                base_config_path=tmp_path / "synthetic.toml",
+            ),
+            mechanism="corridor_capacity_exceeded",
+            force_admissible=True,
+        ),
+        _result_for_slice(
+            tmp_path,
+            tranche_name=tranche.tranche_name,
+            slice_definition=TrancheSlice(
+                slice_id="b",
+                tranche_name=tranche.tranche_name,
+                seed=2,
+                resolved_params={"alpha": 0.5},
+                base_config_path=tmp_path / "synthetic.toml",
+            ),
+            mechanism="node_service_collapse",
+            force_admissible=True,
+        ),
+        _result_for_slice(
+            tmp_path,
+            tranche_name=tranche.tranche_name,
+            slice_definition=TrancheSlice(
+                slice_id="c",
+                tranche_name=tranche.tranche_name,
+                seed=3,
+                resolved_params={"alpha": 1.0},
+                base_config_path=tmp_path / "synthetic.toml",
+            ),
+            mechanism="node_service_collapse",
+            force_admissible=True,
+        ),
+    ]
+
+    with pytest.raises(ValueError, match="ambiguous|incomplete|repeat"):
+        build_phase_space_outputs(
+            tranche.tranche_name,
+            results,
+            adaptive_payload={
+                "enabled": True,
+                "max_iterations": 3,
+                "convergence_threshold": 0.2,
+                "iterations": [
+                    {"iteration": 0, "executed_slice_ids": ["a", "b"]},
+                    {"iteration": 2, "executed_slice_ids": ["b"]},
+                ],
+            },
+        )
+
+
 def test_contradiction_class_specific_blocking() -> None:
     payload = build_cross_tranche_thresholds(
         {
@@ -951,7 +1308,21 @@ def test_contradiction_class_specific_blocking() -> None:
                         "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
                         "evidence_type": ThresholdEvidenceType.PHASE_DERIVED.value,
                         "confidence": 0.8,
-                        "promotion_state": {"promoted": True, "decision": "promoted_to_tranche_boundary"},
+                        "support_density": 0.8,
+                        "support_span": 0.1,
+                        "support_confidence": 0.8,
+                        "nuisance_vector": {"congestion": 0.0, "trust": 0.0, "comms": 0.0, "navigation": 0.0, "weather": 0.0, "contingency": 0.0},
+                        "dominant_axis": None,
+                        "entropy": 0.0,
+                        "monotonicity_violation": False,
+                        "monotonicity_block_reason": None,
+                        "contradictions": [],
+                        "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        "promotion_state": {
+                            "promoted": True,
+                            "decision": "promoted_to_tranche_boundary",
+                            "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        },
                         "replay_hash_provenance": {"threshold_replay_hash": "hash-load"},
                         "support_metrics": {"normalized_bracket_width": 0.1},
                         "normalization_basis_origin": "TRANCHE_ADMISSIBILITY_ENVELOPE",
@@ -971,7 +1342,21 @@ def test_contradiction_class_specific_blocking() -> None:
                         "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
                         "evidence_type": ThresholdEvidenceType.PHASE_DERIVED.value,
                         "confidence": 0.82,
-                        "promotion_state": {"promoted": True, "decision": "promoted_to_tranche_boundary"},
+                        "support_density": 0.8,
+                        "support_span": 0.13,
+                        "support_confidence": 0.82,
+                        "nuisance_vector": {"congestion": 0.0, "trust": 0.0, "comms": 0.0, "navigation": 0.0, "weather": 0.0, "contingency": 0.0},
+                        "dominant_axis": None,
+                        "entropy": 0.0,
+                        "monotonicity_violation": False,
+                        "monotonicity_block_reason": None,
+                        "contradictions": [],
+                        "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        "promotion_state": {
+                            "promoted": True,
+                            "decision": "promoted_to_tranche_boundary",
+                            "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        },
                         "replay_hash_provenance": {"threshold_replay_hash": "hash-weather"},
                         "support_metrics": {"normalized_bracket_width": 0.08},
                         "normalization_basis_origin": "TRANCHE_ADMISSIBILITY_ENVELOPE",
@@ -1004,7 +1389,21 @@ def test_cross_tranche_inconsistency_flagging() -> None:
                         "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
                         "evidence_type": ThresholdEvidenceType.PHASE_DERIVED.value,
                         "confidence": 0.8,
-                        "promotion_state": {"promoted": True, "decision": "promoted_to_tranche_boundary"},
+                        "support_density": 0.8,
+                        "support_span": 0.2,
+                        "support_confidence": 0.8,
+                        "nuisance_vector": {"congestion": 0.0, "trust": 0.0, "comms": 0.0, "navigation": 0.0, "weather": 0.0, "contingency": 0.0},
+                        "dominant_axis": None,
+                        "entropy": 0.0,
+                        "monotonicity_violation": False,
+                        "monotonicity_block_reason": None,
+                        "contradictions": [],
+                        "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        "promotion_state": {
+                            "promoted": True,
+                            "decision": "promoted_to_tranche_boundary",
+                            "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        },
                         "replay_hash_provenance": {"threshold_replay_hash": "hash-load"},
                         "support_metrics": {"normalized_bracket_width": 0.1},
                         "normalization_basis_origin": "TRANCHE_ADMISSIBILITY_ENVELOPE",
@@ -1022,7 +1421,21 @@ def test_cross_tranche_inconsistency_flagging() -> None:
                         "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
                         "evidence_type": ThresholdEvidenceType.PHASE_DERIVED.value,
                         "confidence": 0.82,
-                        "promotion_state": {"promoted": True, "decision": "promoted_to_tranche_boundary"},
+                        "support_density": 0.8,
+                        "support_span": 0.2,
+                        "support_confidence": 0.82,
+                        "nuisance_vector": {"congestion": 0.0, "trust": 0.0, "comms": 0.0, "navigation": 0.0, "weather": 0.0, "contingency": 0.0},
+                        "dominant_axis": None,
+                        "entropy": 0.0,
+                        "monotonicity_violation": False,
+                        "monotonicity_block_reason": None,
+                        "contradictions": [],
+                        "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        "promotion_state": {
+                            "promoted": True,
+                            "decision": "promoted_to_tranche_boundary",
+                            "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        },
                         "replay_hash_provenance": {"threshold_replay_hash": "hash-weather"},
                         "support_metrics": {"normalized_bracket_width": 0.1},
                         "normalization_basis_origin": "TRANCHE_ADMISSIBILITY_ENVELOPE",
@@ -1043,6 +1456,88 @@ def test_cross_tranche_inconsistency_flagging() -> None:
     assert "contradiction" in finding_kinds
     assert "instability" in finding_kinds
     assert payload["contradictions"]
+
+
+def test_cross_tranche_multiple_contradictions_collapse_to_single_governance_outcome() -> None:
+    payload = build_cross_tranche_thresholds(
+        {
+            "load": {
+                "thresholds": {
+                    "rho_c": {
+                        "threshold_id": "local_tranche:load:rho_c",
+                        "estimate": 1.10,
+                        "normalized_threshold_value": 1.0,
+                        "lower_bound": 1.05,
+                        "upper_bound": 1.15,
+                        "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
+                        "evidence_type": ThresholdEvidenceType.PHASE_DERIVED.value,
+                        "confidence": 0.8,
+                        "support_density": 0.7,
+                        "support_span": 0.1,
+                        "support_confidence": 0.7,
+                        "nuisance_vector": {"congestion": 0.0, "trust": 0.0, "comms": 0.0, "navigation": 0.0, "weather": 0.0, "contingency": 0.0},
+                        "dominant_axis": None,
+                        "entropy": 0.0,
+                        "monotonicity_violation": False,
+                        "monotonicity_block_reason": None,
+                        "contradictions": [],
+                        "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        "promotion_state": {
+                            "promoted": True,
+                            "decision": "promoted_to_tranche_boundary",
+                            "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        },
+                        "replay_hash_provenance": {"threshold_replay_hash": "hash-load"},
+                        "support_metrics": {"normalized_bracket_width": 0.05},
+                        "normalization_basis_origin": "TRANCHE_ADMISSIBILITY_ENVELOPE",
+                        "normalization_basis_value": 1.1,
+                        "normalization_basis_confidence": 0.8,
+                    }
+                }
+            },
+            "weather": {
+                "thresholds": {
+                    "rho_c": {
+                        "threshold_id": "local_tranche:weather:rho_c",
+                        "estimate": -1.12,
+                        "normalized_threshold_value": -1.018,
+                        "lower_bound": 1.30,
+                        "upper_bound": 1.20,
+                        "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
+                        "evidence_type": ThresholdEvidenceType.PHASE_DERIVED.value,
+                        "confidence": 0.82,
+                        "support_density": 0.7,
+                        "support_span": 0.1,
+                        "support_confidence": 0.7,
+                        "nuisance_vector": {"congestion": 0.0, "trust": 0.0, "comms": 0.0, "navigation": 0.0, "weather": 0.0, "contingency": 0.0},
+                        "dominant_axis": None,
+                        "entropy": 0.0,
+                        "monotonicity_violation": False,
+                        "monotonicity_block_reason": None,
+                        "contradictions": [],
+                        "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        "promotion_state": {
+                            "promoted": True,
+                            "decision": "promoted_to_tranche_boundary",
+                            "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        },
+                        "replay_hash_provenance": {"threshold_replay_hash": "hash-weather"},
+                        "support_metrics": {"normalized_bracket_width": 0.05},
+                        "normalization_basis_origin": "GOVERNED_FALLBACK",
+                        "normalization_basis_value": 0.3,
+                        "normalization_basis_confidence": 0.8,
+                    }
+                }
+            },
+        }
+    )
+
+    contradiction_types = {item["contradiction_type"] for item in payload["contradictions"]}
+    rho_global = payload["global_thresholds"]["rho_c"]
+    assert "CROSS_TRANCHE_CONFLICT" in contradiction_types
+    assert "ENVELOPE_VIOLATION" in contradiction_types
+    assert rho_global["promotion_governance_outcome"] == PromotionGovernanceOutcome.GLOBAL_BLOCK.value
+    assert rho_global["promotion_state"]["promotion_governance_outcome"] == PromotionGovernanceOutcome.GLOBAL_BLOCK.value
 
 
 def test_axis_isolation_blocks_non_isolated_threshold_promotion(tmp_path: Path) -> None:
@@ -1115,7 +1610,21 @@ def test_cross_tranche_global_promotion_requires_phase_derived_consensus() -> No
                         "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
                         "evidence_type": ThresholdEvidenceType.PHASE_DERIVED.value,
                         "confidence": 0.8,
-                        "promotion_state": {"promoted": True, "decision": "promoted_to_tranche_boundary"},
+                        "support_density": 0.8,
+                        "support_span": 0.2,
+                        "support_confidence": 0.8,
+                        "nuisance_vector": {"congestion": 0.0, "trust": 0.0, "comms": 0.0, "navigation": 0.0, "weather": 0.0, "contingency": 0.0},
+                        "dominant_axis": None,
+                        "entropy": 0.0,
+                        "monotonicity_violation": False,
+                        "monotonicity_block_reason": None,
+                        "contradictions": [],
+                        "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        "promotion_state": {
+                            "promoted": True,
+                            "decision": "promoted_to_tranche_boundary",
+                            "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        },
                         "replay_hash_provenance": {"threshold_replay_hash": "hash-load"},
                         "support_metrics": {"normalized_bracket_width": 0.1},
                         "is_isolated": True,
@@ -1135,7 +1644,21 @@ def test_cross_tranche_global_promotion_requires_phase_derived_consensus() -> No
                         "status": ThresholdEvidenceStatus.BOUNDED_ESTIMATE.value,
                         "evidence_type": ThresholdEvidenceType.PHASE_DERIVED.value,
                         "confidence": 0.82,
-                        "promotion_state": {"promoted": True, "decision": "promoted_to_tranche_boundary"},
+                        "support_density": 0.8,
+                        "support_span": 0.13,
+                        "support_confidence": 0.82,
+                        "nuisance_vector": {"congestion": 0.0, "trust": 0.0, "comms": 0.0, "navigation": 0.0, "weather": 0.0, "contingency": 0.0},
+                        "dominant_axis": None,
+                        "entropy": 0.0,
+                        "monotonicity_violation": False,
+                        "monotonicity_block_reason": None,
+                        "contradictions": [],
+                        "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        "promotion_state": {
+                            "promoted": True,
+                            "decision": "promoted_to_tranche_boundary",
+                            "promotion_governance_outcome": PromotionGovernanceOutcome.ALLOW.value,
+                        },
                         "replay_hash_provenance": {"threshold_replay_hash": "hash-weather"},
                         "support_metrics": {"normalized_bracket_width": 0.08},
                         "is_isolated": True,
@@ -1153,6 +1676,146 @@ def test_cross_tranche_global_promotion_requires_phase_derived_consensus() -> No
     assert rho_global["evidence_type"] == ThresholdEvidenceType.PHASE_DERIVED.value
     assert rho_global["normalized_threshold_value"] is not None
     assert rho_global["threshold_promotion_decision"] == "PROMOTED"
+
+
+def test_canonical_threshold_normalization_derives_compatibility_fields() -> None:
+    normalized = normalize_threshold_payload(_base_governed_threshold_payload())
+
+    rho_record = normalized["thresholds"]["rho_c"]
+    assert rho_record["admissibility_support_density"] == rho_record["support_density"]
+    assert rho_record["admissibility_support_span"] == rho_record["support_span"]
+    assert rho_record["admissibility_support_confidence"] == rho_record["support_confidence"]
+    assert rho_record["nuisance_dominant_axis"] == rho_record["dominant_axis"] == "trust"
+    assert rho_record["nuisance_entropy"] == rho_record["entropy"]
+    assert rho_record["mechanism_leakage_sources"] == ["trust_degradation"]
+    assert rho_record["mechanism_leakage_score"] == pytest.approx(0.4)
+
+
+def test_governed_artifact_round_trips_preserve_canonical_shape(tmp_path: Path) -> None:
+    local_results = _governed_round_trip_results(tmp_path / "local_results", "synthetic")
+    local_output = tmp_path / "local_artifacts"
+    local_output.mkdir(parents=True, exist_ok=True)
+
+    local_paths = [
+        write_threshold_estimates_json(local_output, "synthetic", local_results),
+        write_threshold_ledger_json(local_output, "synthetic", local_results),
+        write_promotion_decisions_json(local_output, "synthetic", local_results),
+    ]
+
+    local_payloads = {
+        path.name: _canonical_round_trip(json.loads(path.read_text(encoding="utf-8")))
+        for path in local_paths
+    }
+    assert local_payloads["threshold_estimates.json"]["thresholds"]["rho_c"]["mechanism_leakage_sources"] is not None
+    assert local_payloads["threshold_ledger.json"]["promotion_history"]
+    assert local_payloads["promotion_decisions.json"]["decisions"][0]["mechanism_leakage_score"] >= 0.0
+
+    cross_results = {
+        "load": _governed_round_trip_results(tmp_path / "load_results", "load"),
+        "weather": _governed_round_trip_results(tmp_path / "weather_results", "weather"),
+    }
+    cross_output = tmp_path / "cross_artifacts"
+    cross_output.mkdir(parents=True, exist_ok=True)
+    cross_paths = [
+        write_cross_tranche_thresholds_json(cross_output, cross_results),
+        write_contradictions_json(cross_output, cross_results),
+        write_cross_tranche_threshold_ledger_json(cross_output, cross_results),
+        write_cross_tranche_promotion_decisions_json(cross_output, cross_results),
+    ]
+
+    cross_payloads = {
+        path.name: _canonical_round_trip(json.loads(path.read_text(encoding="utf-8")))
+        for path in cross_paths
+    }
+    assert cross_payloads["cross_tranche_thresholds.json"]["global_thresholds"]["rho_c"][
+        "mechanism_leakage_sources"
+    ] is not None
+    assert cross_payloads["contradictions.json"]["global_thresholds"]["rho_c"][
+        "promotion_governance_outcome"
+    ] in {
+        PromotionGovernanceOutcome.ALLOW.value,
+        PromotionGovernanceOutcome.LOCAL_BLOCK.value,
+        PromotionGovernanceOutcome.GLOBAL_BLOCK.value,
+    }
+    assert cross_payloads["cross_tranche_threshold_ledger.json"]["entries"][0]["mechanism_leakage_score"] >= 0.0
+    assert cross_payloads["cross_tranche_promotion_decisions.json"]["decisions"][0][
+        "mechanism_leakage_sources"
+    ] is not None
+
+
+def test_src_does_not_branch_on_contradiction_taxonomy_outside_thresholds() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    src_root = repo_root / "src"
+    thresholds_path = src_root / "avn" / "phase_space" / "thresholds.py"
+    taxonomy_literals = {
+        "LOCAL_INCONSISTENCY",
+        "CROSS_TRANCHE_CONFLICT",
+        "ENVELOPE_VIOLATION",
+        "NON_MONOTONIC_THRESHOLD",
+        "NuisanceDominance",
+        "nuisance_dominance",
+        "non_monotonicity",
+    }
+    violations: list[str] = []
+
+    for path in sorted(src_root.rglob("*.py")):
+        if path == thresholds_path or "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Compare) and any(
+                isinstance(op, (ast.Eq, ast.NotEq, ast.In, ast.NotIn)) for op in node.ops
+            ):
+                subtree = list(ast.walk(node))
+                branches_on_contradiction = any(
+                    isinstance(item, ast.Name) and item.id in {"contradiction_type", "contradiction_types"}
+                    for item in subtree
+                ) or any(
+                    isinstance(item, ast.Constant) and item.value == "contradiction_type"
+                    for item in subtree
+                )
+                references_taxonomy = any(
+                    (
+                        isinstance(item, ast.Constant)
+                        and isinstance(item.value, str)
+                        and item.value in taxonomy_literals
+                    )
+                    or (
+                        isinstance(item, ast.Name)
+                        and item.id.startswith("CONTRADICTION_")
+                    )
+                    for item in subtree
+                )
+                if branches_on_contradiction and references_taxonomy:
+                    violations.append(f"{path}:{node.lineno}")
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                value = node.value if isinstance(node, ast.AnnAssign) else node.value
+                targets = [node.target] if isinstance(node, ast.AnnAssign) else node.targets
+                if value is None:
+                    continue
+                names = [
+                    target.id
+                    for target in targets
+                    if isinstance(target, ast.Name)
+                ]
+                if not any("contradiction" in name for name in names):
+                    continue
+                values = list(ast.walk(value))
+                if any(
+                    (
+                        isinstance(item, ast.Constant)
+                        and isinstance(item.value, str)
+                        and item.value in taxonomy_literals
+                    )
+                    or (
+                        isinstance(item, ast.Name)
+                        and item.id.startswith("CONTRADICTION_")
+                    )
+                    for item in values
+                ):
+                    violations.append(f"{path}:{node.lineno}")
+
+    assert not violations, f"Contradiction taxonomy drift detected outside thresholds.py: {violations}"
 
 
 def test_cli_passes_adaptive_flags(monkeypatch, tmp_path: Path, capsys) -> None:

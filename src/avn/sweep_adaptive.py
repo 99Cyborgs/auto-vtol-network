@@ -155,7 +155,7 @@ def _refinement_parameter_sets(
         base_score = float(region.entropy) + float(region.local_disagreement) + float(region.local_gradient)
         priority = (
             base_score
-            + (ADAPTIVE_SUPPORT_WEIGHT * float(support_terms["support_density"]))
+            + (ADAPTIVE_SUPPORT_WEIGHT * float(support_terms["bounded_support_density"]))
             + (ADAPTIVE_UNCERTAINTY_WEIGHT * (1.0 - float(support_terms["support_confidence"])))
         )
         scored_regions.append((region, support_terms, base_score, priority))

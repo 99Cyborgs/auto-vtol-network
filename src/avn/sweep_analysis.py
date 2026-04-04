@@ -16,6 +16,8 @@ from avn.phase_space import (
     build_cross_tranche_thresholds,
     build_threshold_estimates,
     detect_transition_regions,
+    normalize_governed_artifact_payload,
+    normalize_threshold_payload,
     phase_map_payload,
     phase_points_from_slice_results,
 )
@@ -465,6 +467,7 @@ def build_slice_results_payload(
         adaptive_payload=adaptive_payload,
     )
     threshold_payload = phase_outputs["threshold_estimates"]
+    threshold_payload = normalize_governed_artifact_payload(threshold_payload)
     payload = {
         "analysis_contract_version": 2,
         "tranche": tranche.to_dict(),
@@ -484,6 +487,8 @@ def load_slice_results_payload(path: str | Path) -> tuple[dict[str, object], lis
     payload_path = Path(path)
     with payload_path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
+    if isinstance(payload, dict) and isinstance(payload.get("thresholds"), dict):
+        payload = normalize_governed_artifact_payload(payload)
     return payload, [TrancheSliceResult.from_dict(item) for item in payload["results"]]
 
 
@@ -759,19 +764,48 @@ def _phase_points_by_iteration(
     iteration_points: list[list[object]] = []
     cumulative_counts: list[int] = []
     new_counts: list[int] = []
+    expected_iteration = 0
     for record in records:
         if not isinstance(record, dict):
-            continue
+            raise ValueError("Adaptive replay history must contain iteration dictionaries.")
+        if record.get("iteration") != expected_iteration:
+            raise ValueError(
+                f"Adaptive replay history is ambiguous: expected iteration {expected_iteration}, got {record.get('iteration')}."
+            )
         executed_ids = [
             slice_id
             for slice_id in record.get("executed_slice_ids", [])
-            if isinstance(slice_id, str) and slice_id in point_lookup
+            if isinstance(slice_id, str)
         ]
+        if len(executed_ids) != len(record.get("executed_slice_ids", [])):
+            raise ValueError("Adaptive replay history contains non-string slice identifiers.")
+        unknown_slice_ids = [slice_id for slice_id in executed_ids if slice_id not in point_lookup]
+        if unknown_slice_ids:
+            raise ValueError(
+                f"Adaptive replay history references unknown slice ids: {sorted(unknown_slice_ids)}."
+            )
+        duplicate_ids = sorted({slice_id for slice_id in executed_ids if executed_ids.count(slice_id) > 1})
+        if duplicate_ids:
+            raise ValueError(
+                f"Adaptive replay history replays the same slice more than once in one iteration: {duplicate_ids}."
+            )
+        repeated_ids = sorted(set(executed_ids).intersection(cumulative_ids))
+        if repeated_ids:
+            raise ValueError(
+                f"Adaptive replay history is ambiguous because slices repeat across iterations: {repeated_ids}."
+            )
         cumulative_ids.extend(executed_ids)
         unique_ids = list(dict.fromkeys(cumulative_ids))
         iteration_points.append([point_lookup[slice_id] for slice_id in sorted(unique_ids)])
         cumulative_counts.append(len(unique_ids))
         new_counts.append(len(executed_ids))
+        expected_iteration += 1
+
+    if set(cumulative_ids) != set(point_lookup):
+        missing = sorted(set(point_lookup).difference(cumulative_ids))
+        raise ValueError(
+            f"Adaptive replay history is incomplete; missing slice ids: {missing}."
+        )
 
     if not iteration_points:
         iteration_points = [list(point_lookup.values())]
@@ -818,33 +852,43 @@ def _threshold_history_by_iteration(
             dominant_axis=dominant_axis,
             previous_thresholds=previous_thresholds,
         )
+        iteration_thresholds = normalize_threshold_payload(iteration_thresholds)
         threshold_payloads.append(iteration_thresholds)
         previous_thresholds = iteration_thresholds.get("thresholds")
         history.append(
-            {
-                "iteration": index,
-                "slice_count": len(points),
-                "threshold_statuses": {
-                    threshold_name: {
-                        "status": threshold_payload["status"],
-                        "estimate": threshold_payload.get("estimate"),
-                        "promotion_decision": threshold_payload["promotion_state"]["decision"],
-                        "promotion_governance_outcome": threshold_payload.get("promotion_governance_outcome"),
-                        "admissibility_support_density": threshold_payload.get("admissibility_support_density"),
-                        "admissibility_support_confidence": threshold_payload.get("admissibility_support_confidence"),
-                        "monotonicity_violation": threshold_payload.get("monotonicity_violation"),
-                        "monotonicity_block_reason": threshold_payload.get("monotonicity_block_reason"),
-                    }
-                    for threshold_name, threshold_payload in iteration_thresholds["thresholds"].items()
-                },
-                "promotion_decisions": iteration_thresholds["promotion_decisions"],
-            }
+            normalize_governed_artifact_payload(
+                {
+                    "iteration": index,
+                    "slice_count": len(points),
+                    "threshold_statuses": {
+                        threshold_name: {
+                            "status": threshold_payload["status"],
+                            "estimate": threshold_payload.get("estimate"),
+                            "promotion_decision": threshold_payload["promotion_state"]["decision"],
+                            "promotion_governance_outcome": threshold_payload.get("promotion_governance_outcome"),
+                            "support_density": threshold_payload.get("support_density"),
+                            "support_span": threshold_payload.get("support_span"),
+                            "support_confidence": threshold_payload.get("support_confidence"),
+                            "nuisance_vector": threshold_payload.get("nuisance_vector"),
+                            "dominant_axis": threshold_payload.get("dominant_axis"),
+                            "entropy": threshold_payload.get("entropy"),
+                            "admissibility_support_density": threshold_payload.get("admissibility_support_density"),
+                            "admissibility_support_confidence": threshold_payload.get("admissibility_support_confidence"),
+                            "monotonicity_violation": threshold_payload.get("monotonicity_violation"),
+                            "monotonicity_block_reason": threshold_payload.get("monotonicity_block_reason"),
+                            "contradictions": threshold_payload.get("contradictions"),
+                        }
+                        for threshold_name, threshold_payload in iteration_thresholds["thresholds"].items()
+                    },
+                    "promotion_decisions": iteration_thresholds["promotion_decisions"],
+                }
+            )
         )
     return history, threshold_payloads
 
 
 def _governed_transition_summary(threshold_payload: dict[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    thresholds = threshold_payload.get("thresholds", {})
+    thresholds = normalize_governed_artifact_payload(threshold_payload).get("thresholds", {})
     if not isinstance(thresholds, dict):
         return [], []
 
@@ -867,6 +911,16 @@ def _governed_transition_summary(threshold_payload: dict[str, object]) -> tuple[
             "source_axis": derivation_basis.get("source_axis"),
             "support_count": threshold_record.get("support_count"),
             "promotion_decision": threshold_record.get("promotion_state", {}).get("decision"),
+            "promotion_governance_outcome": threshold_record.get("promotion_governance_outcome"),
+            "support_density": threshold_record.get("support_density"),
+            "support_span": threshold_record.get("support_span"),
+            "support_confidence": threshold_record.get("support_confidence"),
+            "nuisance_vector": threshold_record.get("nuisance_vector"),
+            "dominant_axis": threshold_record.get("dominant_axis"),
+            "entropy": threshold_record.get("entropy"),
+            "monotonicity_violation": threshold_record.get("monotonicity_violation"),
+            "monotonicity_block_reason": threshold_record.get("monotonicity_block_reason"),
+            "contradictions": threshold_record.get("contradictions"),
         }
         if bool(threshold_record.get("promotion_state", {}).get("promoted")):
             promoted_boundaries.append(summary)
@@ -915,7 +969,9 @@ def build_phase_space_outputs(
             else None
         ),
     )
+    thresholds = normalize_threshold_payload(thresholds)
     thresholds["promotion_history"] = promotion_history
+    thresholds = normalize_governed_artifact_payload(thresholds)
     admissibility_overlay = build_admissibility_overlay(tranche_name, phase_points)
     convergence_report = build_convergence_report(
         iteration_regions,
@@ -1231,6 +1287,8 @@ def write_contradictions_json(
                 "analysis_contract_version": payload["analysis_contract_version"],
                 "scope": payload["scope"],
                 "contradictions": payload.get("contradictions", []),
+                "global_thresholds": payload.get("global_thresholds", {}),
+                "promotion_decisions": payload.get("promotion_decisions", []),
             },
             handle,
             indent=2,
