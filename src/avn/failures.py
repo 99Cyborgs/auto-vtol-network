@@ -9,6 +9,7 @@ REROUTE_CASCADE = "REROUTE_CASCADE"
 WEATHER_COLLAPSE = "WEATHER_COLLAPSE"
 COMMS_FAILURE = "COMMS_FAILURE"
 TRUST_FAILURE = "TRUST_FAILURE"
+CONTINGENCY_SATURATION = "CONTINGENCY_SATURATION"
 
 FAILURE_MODES = (
     CORRIDOR_CONGESTION,
@@ -17,6 +18,7 @@ FAILURE_MODES = (
     WEATHER_COLLAPSE,
     COMMS_FAILURE,
     TRUST_FAILURE,
+    CONTINGENCY_SATURATION,
 )
 
 FAILURE_MODE_TO_LEGACY = {
@@ -26,6 +28,7 @@ FAILURE_MODE_TO_LEGACY = {
     WEATHER_COLLAPSE: "coupled_failure_indeterminate",
     COMMS_FAILURE: "stale_information_instability",
     TRUST_FAILURE: "trust_breakdown",
+    CONTINGENCY_SATURATION: "contingency_unreachable",
 }
 
 
@@ -61,6 +64,20 @@ def classify_failure_mode(summary: dict[str, object]) -> FailureClassification:
         3.0 * _phase_confidence("weather_collapse")
         + float(summary.get("weather_severity_peak", 0.0))
         + max(0.0, 1.0 - float(summary.get("alpha_e_min", summary.get("physics_summary", {}).get("alpha_e_min", 1.0))))
+    )
+    contingency_score = (
+        4.0 * _phase_confidence("contingency_saturation")
+        + 2.0 * float(summary.get("no_admissible_landing_events", 0))
+        + 3.0
+        * max(
+            0.0,
+            -float(
+                summary.get(
+                    "contingency_margin_min",
+                    summary.get("physics_summary", {}).get("contingency_margin_min", 0.0),
+                )
+            ),
+        )
     )
     comms_score = (
         2.0 * _phase_confidence("comms_failure")
@@ -98,6 +115,7 @@ def classify_failure_mode(summary: dict[str, object]) -> FailureClassification:
         WEATHER_COLLAPSE: weather_score,
         COMMS_FAILURE: comms_score,
         TRUST_FAILURE: trust_score,
+        CONTINGENCY_SATURATION: contingency_score,
     }
     dominant_mode = sorted(scores.items(), key=lambda item: (-item[1], item[0]))[0][0]
     total_score = sum(scores.values())
@@ -120,6 +138,7 @@ def classify_legacy_failure(first_violation_cause: str | None, summary: dict[str
         "unsafe_admissions": "trust_breakdown",
         "reachable_landing_options": "contingency_unreachable",
         "contingency_saturation_duration": "contingency_unreachable",
+        "contingency_margin": "contingency_unreachable",
         "operator_intervention_rate": "coupled_failure_indeterminate",
     }
     no_admissible = int(summary.get("no_admissible_landing_events", 0))

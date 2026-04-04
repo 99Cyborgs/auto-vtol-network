@@ -459,12 +459,21 @@ def build_slice_results_payload(
     output_dir: Path,
     adaptive_payload: dict[str, object] | None = None,
 ) -> dict[str, object]:
+    phase_outputs = build_phase_space_outputs(
+        tranche.tranche_name,
+        results,
+        adaptive_payload=adaptive_payload,
+    )
+    threshold_payload = phase_outputs["threshold_estimates"]
     payload = {
         "analysis_contract_version": 2,
         "tranche": tranche.to_dict(),
         "output_dir": str(output_dir.resolve()),
         "slice_count": len(results),
         "results": [result.to_dict() for result in results],
+        "thresholds": copy.deepcopy(threshold_payload.get("thresholds", {})),
+        "event_consistency": copy.deepcopy(threshold_payload.get("event_consistency", {})),
+        "axis_isolation": copy.deepcopy(threshold_payload.get("axis_isolation", {})),
     }
     if adaptive_payload is not None:
         payload["adaptive"] = copy.deepcopy(adaptive_payload)
@@ -793,8 +802,12 @@ def _threshold_history_by_iteration(
     tranche_name: str,
     iteration_points: list[list[object]],
     iteration_regions: list[list[object]],
-) -> list[dict[str, object]]:
+    *,
+    dominant_axis: str | None,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     history: list[dict[str, object]] = []
+    threshold_payloads: list[dict[str, object]] = []
+    previous_thresholds: dict[str, dict[str, object]] | None = None
     for index, (points, regions) in enumerate(zip(iteration_points, iteration_regions, strict=True)):
         iteration_thresholds = build_threshold_estimates(
             tranche_name,
@@ -802,7 +815,11 @@ def _threshold_history_by_iteration(
             regions,
             replay_points=points,
             replay_transition_regions=regions,
+            dominant_axis=dominant_axis,
+            previous_thresholds=previous_thresholds,
         )
+        threshold_payloads.append(iteration_thresholds)
+        previous_thresholds = iteration_thresholds.get("thresholds")
         history.append(
             {
                 "iteration": index,
@@ -812,13 +829,18 @@ def _threshold_history_by_iteration(
                         "status": threshold_payload["status"],
                         "estimate": threshold_payload.get("estimate"),
                         "promotion_decision": threshold_payload["promotion_state"]["decision"],
+                        "promotion_governance_outcome": threshold_payload.get("promotion_governance_outcome"),
+                        "admissibility_support_density": threshold_payload.get("admissibility_support_density"),
+                        "admissibility_support_confidence": threshold_payload.get("admissibility_support_confidence"),
+                        "monotonicity_violation": threshold_payload.get("monotonicity_violation"),
+                        "monotonicity_block_reason": threshold_payload.get("monotonicity_block_reason"),
                     }
                     for threshold_name, threshold_payload in iteration_thresholds["thresholds"].items()
                 },
                 "promotion_decisions": iteration_thresholds["promotion_decisions"],
             }
         )
-    return history
+    return history, threshold_payloads
 
 
 def _governed_transition_summary(threshold_payload: dict[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
@@ -862,23 +884,39 @@ def build_phase_space_outputs(
     phase_points = phase_points_from_slice_results(sorted(results, key=lambda item: item.slice_id))
     transition_regions = detect_transition_regions(phase_points)
     replay_points, replay_regions = _round_trip_phase_points(results)
+    dominant_axis = next(
+        (
+            key
+            for key in sorted(results[0].resolved_params)
+            if len({json.dumps(result.resolved_params[key], sort_keys=True) for result in results}) > 1
+        ),
+        None,
+    ) if results else None
+    iteration_points, cumulative_counts, new_counts, adaptive_enabled, max_iterations, convergence_threshold = (
+        _phase_points_by_iteration(results, adaptive_payload)
+    )
+    iteration_regions = [detect_transition_regions(points) for points in iteration_points]
+    promotion_history, threshold_history_payloads = _threshold_history_by_iteration(
+        tranche_name,
+        iteration_points,
+        iteration_regions,
+        dominant_axis=dominant_axis,
+    )
     thresholds = build_threshold_estimates(
         tranche_name,
         phase_points,
         transition_regions,
         replay_points=replay_points,
         replay_transition_regions=replay_regions,
+        dominant_axis=dominant_axis,
+        previous_thresholds=(
+            threshold_history_payloads[-2]["thresholds"]
+            if len(threshold_history_payloads) >= 2
+            else None
+        ),
     )
+    thresholds["promotion_history"] = promotion_history
     admissibility_overlay = build_admissibility_overlay(tranche_name, phase_points)
-    iteration_points, cumulative_counts, new_counts, adaptive_enabled, max_iterations, convergence_threshold = (
-        _phase_points_by_iteration(results, adaptive_payload)
-    )
-    iteration_regions = [detect_transition_regions(points) for points in iteration_points]
-    thresholds["promotion_history"] = _threshold_history_by_iteration(
-        tranche_name,
-        iteration_points,
-        iteration_regions,
-    )
     convergence_report = build_convergence_report(
         iteration_regions,
         convergence_threshold=convergence_threshold,
@@ -1172,6 +1210,31 @@ def write_cross_tranche_thresholds_json(
     )
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
+    return path
+
+
+def write_contradictions_json(
+    output_dir: Path,
+    tranche_results: dict[str, list[TrancheSliceResult]],
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / "contradictions.json"
+    payload = build_cross_tranche_thresholds(
+        {
+            tranche_name: build_phase_space_outputs(tranche_name, results)["threshold_estimates"]
+            for tranche_name, results in sorted(tranche_results.items())
+        }
+    )
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "analysis_contract_version": payload["analysis_contract_version"],
+                "scope": payload["scope"],
+                "contradictions": payload.get("contradictions", []),
+            },
+            handle,
+            indent=2,
+        )
     return path
 
 

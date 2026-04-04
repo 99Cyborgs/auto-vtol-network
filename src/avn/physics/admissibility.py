@@ -34,6 +34,7 @@ def evaluate_admissibility(
         "gamma": sample.gamma_e - admissibility.gamma_min,
         "trust": admissibility.chi_max - sample.chi_e,
         "reserve": sample.reserve_e - admissibility.reserve_min,
+        "contingency_margin": sample.kappa_i - sample.demand_diverts,
         "capacity": response.c_e,
     }
     violated = tuple(key for key, margin in margins.items() if key != "capacity" and margin < 0.0)

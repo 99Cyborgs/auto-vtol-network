@@ -25,6 +25,20 @@ PHASE_METRIC_KEYS = (
     "no_admissible_landing_events",
     "contingency_saturation_duration",
     "reachable_landing_option_mean",
+    "weather_severity_peak",
+    "comms_reliability_min",
+    "alpha_e_min",
+    "alpha_weather_min",
+    "alpha_comms_min",
+    "alpha_nav_min",
+    "alpha_trust_min",
+    "contingency_margin_min",
+    "reserve_margin_min",
+    "congestion_spillback_pressure",
+    "trust_degradation",
+    "communications_degradation",
+    "navigation_degradation",
+    "contingency_saturation_pressure",
     "rho_c",
     "lambda_c",
     "gamma_c",
@@ -44,10 +58,22 @@ class ThresholdEvidenceStatus(StrEnum):
     INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
 
 
+class ThresholdEvidenceType(StrEnum):
+    PHASE_DERIVED = "phase_derived"
+    MIXED = "mixed"
+    PROXY_ONLY = "proxy_only"
+
+
 class AdmissibilityState(StrEnum):
     ADMISSIBLE_CANDIDATE = "ADMISSIBLE_CANDIDATE"
     INADMISSIBLE_CANDIDATE = "INADMISSIBLE_CANDIDATE"
     UNRESOLVED = "UNRESOLVED"
+
+
+class PromotionGovernanceOutcome(StrEnum):
+    ALLOW = "ALLOW"
+    LOCAL_BLOCK = "LOCAL_BLOCK"
+    GLOBAL_BLOCK = "GLOBAL_BLOCK"
 
 
 def _coerce_numeric_param(value: object) -> float | None:
@@ -268,6 +294,7 @@ def phase_point_from_slice_result(result: TrancheSliceResult) -> PhasePoint:
     replay_hash = slice_replay_hash(result)
     phase_detection = result.phase_detection if isinstance(result.phase_detection, dict) else {}
     physics_summary = result.physics_summary if isinstance(result.physics_summary, dict) else {}
+    event_chain = result.mean_metrics.get("event_chain", {}) if isinstance(result.mean_metrics, dict) else {}
 
     def _phase_value(name: str, key: str) -> float | None:
         record = phase_detection.get(name, {})
@@ -293,10 +320,20 @@ def phase_point_from_slice_result(result: TrancheSliceResult) -> PhasePoint:
         "no_admissible_landing_events": result.contingency_metrics_snapshot.no_admissible_landing_events,
         "contingency_saturation_duration": result.contingency_metrics_snapshot.contingency_saturation_duration,
         "reachable_landing_option_mean": result.contingency_metrics_snapshot.reachable_landing_option_mean,
+        "weather_severity_peak": _coerce_numeric_metric(result.mean_metrics.get("weather_severity_peak"), default=0.0),
+        "comms_reliability_min": _coerce_numeric_metric(result.mean_metrics.get("comms_reliability_min"), default=1.0),
+        "alpha_e_min": _coerce_numeric_metric(physics_summary.get("alpha_e_min"), default=1.0),
+        "alpha_weather_min": _coerce_numeric_metric(physics_summary.get("alpha_weather_min"), default=1.0),
+        "alpha_comms_min": _coerce_numeric_metric(physics_summary.get("alpha_comms_min"), default=1.0),
+        "alpha_nav_min": _coerce_numeric_metric(physics_summary.get("alpha_nav_min"), default=1.0),
+        "alpha_trust_min": _coerce_numeric_metric(physics_summary.get("alpha_trust_min"), default=1.0),
+        "contingency_margin_min": _coerce_numeric_metric(physics_summary.get("contingency_margin_min"), default=0.0),
+        "reserve_margin_min": _coerce_numeric_metric(result.mean_metrics.get("reserve_margin_min"), default=0.0),
         "rho_c": _phase_value("flow_breakdown", "rho_c"),
         "lambda_c": _phase_value("queue_divergence", "lambda_c"),
         "gamma_c": _phase_value("comms_failure", "gamma_c"),
         "w_c": _phase_value("weather_collapse", "w_c"),
+        "contingency_margin": _phase_value("contingency_saturation", "contingency_margin"),
         "flow_breakdown_detected": bool(phase_detection.get("flow_breakdown", {}).get("detected", False)),
         "flow_breakdown_confidence": _coerce_numeric_metric(
             phase_detection.get("flow_breakdown", {}).get("confidence"),
@@ -316,6 +353,21 @@ def phase_point_from_slice_result(result: TrancheSliceResult) -> PhasePoint:
         "weather_collapse_confidence": _coerce_numeric_metric(
             phase_detection.get("weather_collapse", {}).get("confidence"),
             default=0.0,
+        ),
+        "phase_transition_time": (
+            float(event_chain["phase_transition_time"])
+            if isinstance(event_chain.get("phase_transition_time"), (int, float))
+            else None
+        ),
+        "admissibility_exit_time": (
+            float(event_chain["admissibility_degradation_time"])
+            if isinstance(event_chain.get("admissibility_degradation_time"), (int, float))
+            else None
+        ),
+        "collapse_time": (
+            float(event_chain["collapse_time"])
+            if isinstance(event_chain.get("collapse_time"), (int, float))
+            else None
         ),
         "rho_proxy": _coerce_numeric_metric(
             result.resolved_params.get("modifiers.demand_multiplier"),
@@ -339,6 +391,30 @@ def phase_point_from_slice_result(result: TrancheSliceResult) -> PhasePoint:
         "confidence_score": result.confidence_score,
         "seed_count": result.seed_count,
     }
+    metrics["congestion_spillback_pressure"] = max(
+        metrics["peak_corridor_load_ratio"],
+        metrics["peak_node_utilization_ratio"],
+        metrics["peak_queue_ratio"],
+    )
+    metrics["trust_degradation"] = max(
+        0.0,
+        1.0 - _coerce_numeric_metric(metrics["trusted_active_fraction"], default=1.0),
+    )
+    metrics["communications_degradation"] = max(
+        0.0,
+        1.0 - _coerce_numeric_metric(metrics["comms_reliability_min"], default=1.0),
+    )
+    metrics["navigation_degradation"] = max(
+        0.0,
+        1.0 - _coerce_numeric_metric(metrics["alpha_nav_min"], default=1.0),
+    )
+    metrics["contingency_saturation_pressure"] = max(
+        0.0,
+        -_coerce_numeric_metric(metrics["contingency_margin_min"], default=0.0),
+    ) + max(
+        0.0,
+        1.0 - _coerce_numeric_metric(metrics["reachable_landing_option_mean"], default=1.0),
+    )
     if context:
         metrics["context"] = context
     return PhasePoint(

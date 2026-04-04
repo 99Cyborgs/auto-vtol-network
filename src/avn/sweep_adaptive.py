@@ -8,6 +8,12 @@ from typing import TYPE_CHECKING, Callable
 
 from avn.phase_space.convergence import build_convergence_report
 from avn.phase_space.models import phase_points_from_slice_results
+from avn.phase_space.thresholds import (
+    ADAPTIVE_SUPPORT_WEIGHT,
+    ADAPTIVE_UNCERTAINTY_WEIGHT,
+    adaptive_region_priority_terms,
+    build_threshold_estimates,
+)
 from avn.phase_space.transitions import detect_transition_regions
 from avn.sweep_tranches import SweepAxis, TrancheDefinition, TrancheSlice, build_tranche_slice
 
@@ -138,20 +144,34 @@ def _refinement_parameter_sets(
     tranche: TrancheDefinition,
     transition_regions,
     *,
+    threshold_payload: dict[str, object],
     executed_slice_ids: set[str],
     limit: int,
 ) -> list[dict[str, object]]:
     candidates: list[dict[str, object]] = []
+    scored_regions = []
+    for region in transition_regions:
+        support_terms = adaptive_region_priority_terms(region, threshold_payload)
+        base_score = float(region.entropy) + float(region.local_disagreement) + float(region.local_gradient)
+        priority = (
+            base_score
+            + (ADAPTIVE_SUPPORT_WEIGHT * float(support_terms["support_density"]))
+            + (ADAPTIVE_UNCERTAINTY_WEIGHT * (1.0 - float(support_terms["support_confidence"])))
+        )
+        scored_regions.append((region, support_terms, base_score, priority))
     for region in sorted(
-        transition_regions,
+        scored_regions,
         key=lambda item: (
-            item.entropy,
-            item.local_disagreement,
-            item.local_gradient,
-            item.transition_axis or "",
+            item[3],
+            item[2],
+            float(item[0].entropy),
+            float(item[0].local_disagreement),
+            float(item[0].local_gradient),
+            item[0].transition_axis or "",
         ),
         reverse=True,
     ):
+        region, support_terms, base_score, priority = region
         resolved_params = _parameter_set_from_region(tranche, region)
         if resolved_params is None:
             continue
@@ -210,6 +230,14 @@ def adaptive_sweep(
         cumulative_results = [executed_results[slice_id] for slice_id in sorted(executed_results)]
         phase_points = phase_points_from_slice_results(cumulative_results)
         transition_regions = detect_transition_regions(phase_points)
+        threshold_payload = build_threshold_estimates(
+            tranche_spec.tranche_name,
+            phase_points,
+            transition_regions,
+            replay_points=phase_points,
+            replay_transition_regions=transition_regions,
+            dominant_axis=tranche_spec.dominant_axis,
+        )
 
         iteration_records.append(
             {
@@ -243,6 +271,7 @@ def adaptive_sweep(
         pending_params = _refinement_parameter_sets(
             tranche_spec,
             transition_regions,
+            threshold_payload=threshold_payload,
             executed_slice_ids=set(executed_results),
             limit=max(1, len(_refineable_axes(tranche_spec))),
         )

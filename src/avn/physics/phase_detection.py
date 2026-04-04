@@ -120,6 +120,31 @@ def _admissibility_exit(admissibility_results: Sequence[AdmissibilityResult]) ->
     return _not_detected("admissibility_boundary_crossing")
 
 
+def _contingency_saturation(
+    samples: Sequence[PhysicsStateSample],
+    admissibility_results: Sequence[AdmissibilityResult],
+) -> PhaseDetectionRecord:
+    for sample, admissibility in zip(samples, admissibility_results):
+        contingency_margin = sample.kappa_i - sample.demand_diverts
+        if contingency_margin >= 0.0 and "contingency_margin" not in admissibility.violated_constraints:
+            continue
+        confidence = min(1.0, 0.6 + min(0.4, abs(contingency_margin) / 2.0))
+        return PhaseDetectionRecord(
+            detected=True,
+            threshold_value=contingency_margin,
+            time_minute=sample.time_minute,
+            detection_method="contingency_margin_crossing",
+            confidence=confidence,
+            details={
+                "contingency_margin": contingency_margin,
+                "kappa_i": sample.kappa_i,
+                "demand_diverts": sample.demand_diverts,
+                "violated_constraints": list(admissibility.violated_constraints),
+            },
+        )
+    return _not_detected("contingency_margin_crossing")
+
+
 def _comms_failure(
     samples: Sequence[PhysicsStateSample],
     admissibility_results: Sequence[AdmissibilityResult],
@@ -179,12 +204,14 @@ def detect_phase_events(
     flow_breakdown = _flow_breakdown(samples, responses)
     queue_divergence = _queue_divergence(samples)
     admissibility_exit = _admissibility_exit(admissibility_results)
+    contingency_saturation = _contingency_saturation(samples, admissibility_results)
     comms_failure = _comms_failure(samples, admissibility_results)
     weather_collapse = _weather_collapse(samples, responses, admissibility_results)
     return {
         "flow_breakdown": flow_breakdown,
         "queue_divergence": queue_divergence,
         "admissibility_exit": admissibility_exit,
+        "contingency_saturation": contingency_saturation,
         "comms_failure": comms_failure,
         "weather_collapse": weather_collapse,
     }

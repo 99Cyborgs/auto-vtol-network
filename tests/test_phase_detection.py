@@ -8,8 +8,8 @@ def test_phase_detection_identifies_synthetic_transitions() -> None:
     samples = [
         PhysicsStateSample(0, 0.5, 0.5, 0.8, 1.0, 0.1, 0.95, 1.0, 0.1, 0.1, 5.0, 30.0, 5),
         PhysicsStateSample(5, 0.8, 0.9, 0.9, 1.0, 0.1, 0.90, 1.0, 0.1, 0.2, 4.5, 30.0, 5),
-        PhysicsStateSample(10, 1.1, 0.85, 1.2, 1.0, 0.2, 0.78, 1.0, 0.1, 0.4, 3.0, 30.0, 5),
-        PhysicsStateSample(15, 1.4, 0.70, 1.3, 1.0, 0.5, 0.72, 1.0, 0.2, 0.7, -0.5, 30.0, 5),
+        PhysicsStateSample(10, 1.1, 0.85, 1.2, 1.0, 0.2, 0.78, 1.0, 0.1, 0.4, 3.0, 30.0, 5, kappa_i=0.0, r_e=3.0, demand_diverts=1.0),
+        PhysicsStateSample(15, 1.4, 0.70, 1.3, 1.0, 0.5, 0.72, 1.0, 0.2, 0.7, -0.5, 30.0, 5, kappa_i=0.0, r_e=-0.5, demand_diverts=2.0),
     ]
     responses = [
         DisturbanceResponse(alpha_e=0.95, c_e=0.95, s_e=31.6),
@@ -29,5 +29,6 @@ def test_phase_detection_identifies_synthetic_transitions() -> None:
     assert events["flow_breakdown"].detected is True
     assert events["queue_divergence"].detected is True
     assert events["admissibility_exit"].detected is True
+    assert events["contingency_saturation"].detected is True
     assert events["comms_failure"].detected is True
     assert events["weather_collapse"].detected is True

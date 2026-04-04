@@ -55,6 +55,8 @@ def test_contingency_saturation_produces_no_admissible_landing(tmp_path: Path) -
 
     assert result.summary["no_admissible_landing_events"] > 0
     assert result.summary["first_dominant_failure_mechanism"] == "contingency_unreachable"
+    assert result.summary["dominant_failure_mode"] == "CONTINGENCY_SATURATION"
+    assert result.summary["phase_detection"]["contingency_saturation"]["detected"] is True
 
 
 def test_compound_scenario_is_deterministic_for_fixed_seed(tmp_path: Path) -> None:

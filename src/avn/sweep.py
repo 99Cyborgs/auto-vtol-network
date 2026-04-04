@@ -26,6 +26,7 @@ from avn.sweep_analysis import (
     write_aggregate_csv,
     write_admissibility_overlay_json,
     write_convergence_report_json,
+    write_contradictions_json,
     write_cross_tranche_outputs,
     write_cross_tranche_promotion_decisions_json,
     write_cross_tranche_threshold_ledger_json,
@@ -85,6 +86,7 @@ class GlobalAnalysisResult:
     tranche_outputs: dict[str, Path]
     global_phase_map_path: Path | None = None
     cross_tranche_thresholds_path: Path | None = None
+    contradictions_path: Path | None = None
     cross_tranche_threshold_ledger_path: Path | None = None
     cross_tranche_promotion_decisions_path: Path | None = None
 
@@ -641,6 +643,11 @@ def _aggregate_tranche_slice_result(
     phase_detection = _aggregate_phase_detection(run_summaries)
     physics_summary = _aggregate_summary_dicts(run_summaries, "physics_summary")
     admissibility_summary = _aggregate_summary_dicts(run_summaries, "admissibility_summary")
+    event_chains = [
+        copy.deepcopy(summary.get("event_chain", {}))
+        for summary in run_summaries
+        if isinstance(summary.get("event_chain"), dict)
+    ]
     confidence_score = _confidence_score(
         run_summaries=run_summaries,
         dominant_failure_mode=dominant_failure_mode,
@@ -752,6 +759,8 @@ def _aggregate_tranche_slice_result(
             "dominant_failure_mode": dominant_failure_mode,
             "legacy_failure_mechanism": legacy_mechanism,
             "phase_detection": phase_detection,
+            "event_chain": _majority_value(event_chains) if event_chains else {},
+            "seed_event_chains": event_chains,
             "physics_summary": physics_summary,
             "admissibility_summary": admissibility_summary,
         },
@@ -851,6 +860,7 @@ def _write_global_outputs(
     matrix_path, comparison_path, summary_path = write_cross_tranche_outputs(output_dir, tranche_results)
     global_phase_map_path = write_global_phase_map_json(output_dir, tranche_results)
     cross_tranche_thresholds_path = write_cross_tranche_thresholds_json(output_dir, tranche_results)
+    contradictions_path = write_contradictions_json(output_dir, tranche_results)
     cross_tranche_threshold_ledger_path = write_cross_tranche_threshold_ledger_json(output_dir, tranche_results)
     cross_tranche_promotion_decisions_path = write_cross_tranche_promotion_decisions_json(
         output_dir,
@@ -864,6 +874,7 @@ def _write_global_outputs(
         tranche_outputs=tranche_outputs,
         global_phase_map_path=global_phase_map_path,
         cross_tranche_thresholds_path=cross_tranche_thresholds_path,
+        contradictions_path=contradictions_path,
         cross_tranche_threshold_ledger_path=cross_tranche_threshold_ledger_path,
         cross_tranche_promotion_decisions_path=cross_tranche_promotion_decisions_path,
     )
@@ -1116,6 +1127,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Global phase map JSON: {global_result.global_phase_map_path}")
         if global_result.cross_tranche_thresholds_path is not None:
             print(f"Cross-tranche thresholds JSON: {global_result.cross_tranche_thresholds_path}")
+        if global_result.contradictions_path is not None:
+            print(f"Contradictions JSON: {global_result.contradictions_path}")
         if global_result.cross_tranche_threshold_ledger_path is not None:
             print(f"Cross-tranche threshold ledger JSON: {global_result.cross_tranche_threshold_ledger_path}")
         if global_result.cross_tranche_promotion_decisions_path is not None:
@@ -1155,6 +1168,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Global phase map JSON: {result.global_phase_map_path}")
             if result.cross_tranche_thresholds_path is not None:
                 print(f"Cross-tranche thresholds JSON: {result.cross_tranche_thresholds_path}")
+            if result.contradictions_path is not None:
+                print(f"Contradictions JSON: {result.contradictions_path}")
             if result.cross_tranche_threshold_ledger_path is not None:
                 print(f"Cross-tranche threshold ledger JSON: {result.cross_tranche_threshold_ledger_path}")
             if result.cross_tranche_promotion_decisions_path is not None:

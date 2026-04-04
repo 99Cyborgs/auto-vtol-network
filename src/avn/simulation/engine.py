@@ -97,6 +97,7 @@ class SimulationEngine:
         self.safe_region_first_violation_time: int | None = None
         self.safe_region_first_violation_cause: str | None = None
         self.safe_region_cumulative_durations: dict[str, float] = defaultdict(float)
+        self.contingency_margin_first_violation_time: int | None = None
 
         self.trust_distribution_over_time: list[dict[str, int | float]] = []
         self.information_age_distribution_over_time: list[dict[str, int | float]] = []
@@ -732,6 +733,17 @@ class SimulationEngine:
             vehicle.state.reachable_landing_options = len(options)
             if vehicle.state.reachable_landing_options == 0 and previous > 0 and vehicle.state.reserve_energy <= vehicle.state.min_contingency_margin + 12.0:
                 self._mark_no_admissible_landing(vehicle, current_minute, "contingency_unreachable")
+        contingency_margin = self._contingency_margin()
+        if contingency_margin < 0.0 and self.contingency_margin_first_violation_time is None:
+            self.contingency_margin_first_violation_time = current_minute
+            self.recorder.record_event(
+                current_minute,
+                "contingency_saturation",
+                contingency_margin=round(contingency_margin, 6),
+                kappa_i=round(self._contingency_supply(), 6),
+                demand_diverts=round(self._contingency_divert_demand(), 6),
+                failure_mode="CONTINGENCY_SATURATION",
+            )
 
     def _mark_no_admissible_landing(self, vehicle: Vehicle, current_minute: int, reason: str) -> None:
         if vehicle.state.no_admissible_landing:
@@ -758,6 +770,28 @@ class SimulationEngine:
             vehicle_id=vehicle_id,
             reason=reason,
         )
+
+    def _contingency_supply(self) -> float:
+        return float(
+            sum(
+                max(0, node.state.contingency_landing_slots - node.state.contingency_occupied)
+                for node in self.network.nodes.values()
+                if node.state.contingency_landing_slots > 0
+            )
+        )
+
+    def _contingency_divert_demand(self) -> float:
+        return float(
+            sum(
+                1
+                for vehicle in self.vehicles
+                if vehicle.state.status != "completed"
+                and (vehicle.state.reachable_landing_options <= 0 or vehicle.state.status == "holding")
+            )
+        )
+
+    def _contingency_margin(self) -> float:
+        return self._contingency_supply() - self._contingency_divert_demand()
 
     def _update_physics_control_layer(self, time_minute: int, disturbance: DisturbanceState) -> None:
         sample = map_engine_state(
@@ -877,6 +911,7 @@ class SimulationEngine:
         latest_physics = self.physics_time_series[-1] if self.physics_time_series else None
         latest_response = self.disturbance_responses[-1] if self.disturbance_responses else None
         latest_admissibility = self.admissibility_time_series[-1] if self.admissibility_time_series else None
+        contingency_margin = self._contingency_margin()
 
         self.last_metrics = {
             "corridor_load_ratio": corridor_load_ratio,
@@ -890,11 +925,19 @@ class SimulationEngine:
             "q_e": latest_physics.q_e if latest_physics is not None else 0.0,
             "lambda_e": latest_physics.lambda_e if latest_physics is not None else 0.0,
             "alpha_e": latest_response.alpha_e if latest_response is not None else 1.0,
+            "alpha_weather": latest_response.alpha_weather if latest_response is not None else 1.0,
+            "alpha_comms": latest_response.alpha_comms if latest_response is not None else 1.0,
+            "alpha_nav": latest_response.alpha_nav if latest_response is not None else 1.0,
+            "alpha_trust": latest_response.alpha_trust if latest_response is not None else 1.0,
             "c_e": latest_response.c_e if latest_response is not None else mean_effective_capacity,
             "s_e": latest_response.s_e if latest_response is not None else 0.0,
             "gamma_e": latest_physics.gamma_e if latest_physics is not None else disturbance.comms_reliability,
             "eta_e": latest_physics.eta_e if latest_physics is not None else 1.0,
             "chi_e": latest_physics.chi_e if latest_physics is not None else 0.0,
+            "kappa_i": latest_physics.kappa_i if latest_physics is not None else self._contingency_supply(),
+            "r_e": latest_physics.r_e if latest_physics is not None else reserve_margin_min,
+            "demand_diverts": latest_physics.demand_diverts if latest_physics is not None else self._contingency_divert_demand(),
+            "contingency_margin": contingency_margin,
             "admissibility_status": latest_admissibility.status if latest_admissibility is not None else "inside_A",
         }
 
@@ -976,9 +1019,16 @@ class SimulationEngine:
                 c_e=latest_response.c_e if latest_response is not None else mean_effective_capacity,
                 s_e=latest_response.s_e if latest_response is not None else 0.0,
                 alpha_e=latest_response.alpha_e if latest_response is not None else 1.0,
+                alpha_weather=latest_response.alpha_weather if latest_response is not None else 1.0,
+                alpha_comms=latest_response.alpha_comms if latest_response is not None else 1.0,
+                alpha_nav=latest_response.alpha_nav if latest_response is not None else 1.0,
+                alpha_trust=latest_response.alpha_trust if latest_response is not None else 1.0,
                 gamma_e=latest_physics.gamma_e if latest_physics is not None else disturbance.comms_reliability,
                 eta_e=latest_physics.eta_e if latest_physics is not None else 1.0,
                 chi_e=latest_physics.chi_e if latest_physics is not None else 0.0,
+                kappa_i=latest_physics.kappa_i if latest_physics is not None else self._contingency_supply(),
+                r_e=latest_physics.r_e if latest_physics is not None else reserve_margin_min,
+                demand_diverts=latest_physics.demand_diverts if latest_physics is not None else self._contingency_divert_demand(),
                 admissibility_status=latest_admissibility.status if latest_admissibility is not None else "inside_A",
             )
         )
@@ -1010,6 +1060,8 @@ class SimulationEngine:
             causes.append("reachable_landing_options")
         if self.safe_region_cumulative_durations.get("contingency_saturation_duration", 0.0) > self.config.safe_region.max_contingency_saturation_duration:
             causes.append("contingency_saturation_duration")
+        if self._contingency_margin() < 0.0:
+            causes.insert(0, "contingency_margin")
         if operator_intervention_rate > self.config.safe_region.max_operator_interventions_per_hour:
             causes.append("operator_intervention_rate")
         return causes
@@ -1046,6 +1098,67 @@ class SimulationEngine:
                 self.admissibility_time_series,
             ).items()
         }
+        if (
+            not phase_detection.get("contingency_saturation", {}).get("detected", False)
+            and (self.contingency_margin_first_violation_time is not None or self.no_admissible_landing_events > 0)
+        ):
+            phase_detection["contingency_saturation"] = {
+                "detected": True,
+                "threshold_value": min(
+                    (sample.kappa_i - sample.demand_diverts for sample in self.physics_time_series),
+                    default=0.0,
+                ),
+                "time_minute": (
+                    self.contingency_margin_first_violation_time
+                    if self.contingency_margin_first_violation_time is not None
+                    else self.safe_region_first_violation_time
+                ),
+                "detection_method": "engine_contingency_margin_crossing",
+                "confidence": 0.8,
+                "details": {
+                    "contingency_margin": min(
+                        (sample.kappa_i - sample.demand_diverts for sample in self.physics_time_series),
+                        default=0.0,
+                    ),
+                    "kappa_i_min": min((sample.kappa_i for sample in self.physics_time_series), default=0.0),
+                    "demand_diverts_peak": max((sample.demand_diverts for sample in self.physics_time_series), default=0.0),
+                },
+            }
+        phase_transition_times = [
+            float(record["time_minute"])
+            for name, record in phase_detection.items()
+            if name != "admissibility_exit"
+            and isinstance(record, dict)
+            and record.get("detected")
+            and isinstance(record.get("time_minute"), (int, float))
+        ]
+        phase_transition_time = min(phase_transition_times) if phase_transition_times else None
+        admissibility_degradation_time = next(
+            (
+                sample.time_minute
+                for sample, result in zip(self.physics_time_series, self.admissibility_time_series)
+                if not result.inside_A
+            ),
+            None,
+        )
+        collapse_time = min(
+            [
+                value
+                for value in (
+                    self.contingency_margin_first_violation_time,
+                    self.safe_region_first_violation_time,
+                    phase_transition_time,
+                )
+                if value is not None
+            ],
+            default=None,
+        )
+        event_chain = {
+            "admissibility_degradation_time": admissibility_degradation_time,
+            "phase_transition_time": phase_transition_time,
+            "safe_region_exit_time": self.safe_region_first_violation_time,
+            "collapse_time": collapse_time,
+        }
         admissibility_inside_count = sum(1 for result in self.admissibility_time_series if result.inside_A)
         admissibility_summary = {
             "inside_fraction": (
@@ -1053,14 +1166,7 @@ class SimulationEngine:
                 if self.admissibility_time_series
                 else 1.0
             ),
-            "first_exit_time": next(
-                (
-                    sample.time_minute
-                    for sample, result in zip(self.physics_time_series, self.admissibility_time_series)
-                    if not result.inside_A
-                ),
-                None,
-            ),
+            "first_exit_time": admissibility_degradation_time,
             "violation_counts": dict(
                 Counter(
                     constraint
@@ -1079,6 +1185,17 @@ class SimulationEngine:
             "c_e_min": min((response.c_e for response in self.disturbance_responses), default=0.0),
             "s_e_max": max((response.s_e for response in self.disturbance_responses), default=0.0),
             "alpha_e_min": min((response.alpha_e for response in self.disturbance_responses), default=1.0),
+            "alpha_weather_min": min((response.alpha_weather for response in self.disturbance_responses), default=1.0),
+            "alpha_comms_min": min((response.alpha_comms for response in self.disturbance_responses), default=1.0),
+            "alpha_nav_min": min((response.alpha_nav for response in self.disturbance_responses), default=1.0),
+            "alpha_trust_min": min((response.alpha_trust for response in self.disturbance_responses), default=1.0),
+            "kappa_i_min": min((sample.kappa_i for sample in self.physics_time_series), default=0.0),
+            "r_e_min": min((sample.r_e for sample in self.physics_time_series), default=0.0),
+            "demand_diverts_peak": max((sample.demand_diverts for sample in self.physics_time_series), default=0.0),
+            "contingency_margin_min": min(
+                (sample.kappa_i - sample.demand_diverts for sample in self.physics_time_series),
+                default=0.0,
+            ),
         }
         legacy_classification = classify_failure(
             self.safe_region_first_violation_cause,
@@ -1116,6 +1233,8 @@ class SimulationEngine:
                 "physics_summary": physics_summary,
                 "alpha_e_min": physics_summary["alpha_e_min"],
                 "chi_e_peak": physics_summary["chi_e_peak"],
+                "contingency_margin_min": physics_summary["contingency_margin_min"],
+                "no_admissible_landing_events": self.no_admissible_landing_events,
             }
         )
 
@@ -1165,11 +1284,20 @@ class SimulationEngine:
             "dominant_failure_mode_confidence": classification.confidence,
             "failure_mode_scores": classification.scores,
             "phase_detection": phase_detection,
+            "event_chain": event_chain,
             "physics_summary": physics_summary,
             "admissibility_summary": admissibility_summary,
             "alpha_e": final_snapshot.alpha_e,
+            "alpha_weather": final_snapshot.alpha_weather,
+            "alpha_comms": final_snapshot.alpha_comms,
+            "alpha_nav": final_snapshot.alpha_nav,
+            "alpha_trust": final_snapshot.alpha_trust,
             "c_e": final_snapshot.c_e,
             "s_e": final_snapshot.s_e,
+            "kappa_i": final_snapshot.kappa_i,
+            "r_e": final_snapshot.r_e,
+            "demand_diverts": final_snapshot.demand_diverts,
+            "contingency_margin_min": physics_summary["contingency_margin_min"],
             "admissibility_status": final_snapshot.admissibility_status,
             "weather_severity_peak": max(snapshot.weather_severity for snapshot in self.recorder.snapshots),
             "comms_reliability_min": min(snapshot.comms_reliability for snapshot in self.recorder.snapshots),
@@ -1189,6 +1317,7 @@ class SimulationEngine:
             "failure_classification": summary["first_dominant_failure_mechanism"],
             "dominant_failure_mode": summary["dominant_failure_mode"],
             "phase_detection": summary["phase_detection"],
+            "event_chain": summary["event_chain"],
             "physics_summary": summary["physics_summary"],
             "admissibility_summary": summary["admissibility_summary"],
         }

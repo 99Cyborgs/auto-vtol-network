@@ -25,6 +25,9 @@ class PhysicsStateSample:
     reserve_e: float
     base_separation: float
     active_vehicle_count: int
+    kappa_i: float = 0.0
+    r_e: float = 0.0
+    demand_diverts: float = 0.0
 
     def to_dict(self) -> dict[str, float | int]:
         return {
@@ -41,6 +44,9 @@ class PhysicsStateSample:
             "reserve_e": self.reserve_e,
             "base_separation": self.base_separation,
             "active_vehicle_count": self.active_vehicle_count,
+            "kappa_i": self.kappa_i,
+            "r_e": self.r_e,
+            "demand_diverts": self.demand_diverts,
         }
 
 
@@ -99,6 +105,16 @@ def map_engine_state(
         (vehicle.state.reserve_energy - vehicle.state.min_contingency_margin for vehicle in vehicles),
         default=0.0,
     )
+    contingency_supply = sum(
+        max(0, node.contingency_landing_slots - node.contingency_occupied)
+        for node in node_states
+        if node.contingency_landing_slots > 0
+    )
+    demand_diverts = sum(
+        1
+        for vehicle in active_vehicles
+        if vehicle.state.reachable_landing_options <= 0 or vehicle.state.status == "holding"
+    )
     mean_required_separation = (
         sum(corridor.required_separation for corridor in corridor_states) / len(corridor_states)
         if corridor_states
@@ -120,4 +136,7 @@ def map_engine_state(
         reserve_e=reserve_margin_min,
         base_separation=mean_required_separation,
         active_vehicle_count=len(active_vehicles),
+        kappa_i=float(contingency_supply),
+        r_e=reserve_margin_min,
+        demand_diverts=float(demand_diverts),
     )

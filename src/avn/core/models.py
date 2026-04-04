@@ -314,7 +314,14 @@ class MetricsSnapshot:
     c_e: float = 0.0
     s_e: float = 0.0
     alpha_e: float = 1.0
+    alpha_weather: float = 1.0
+    alpha_comms: float = 1.0
+    alpha_nav: float = 1.0
+    alpha_trust: float = 1.0
     gamma_e: float = 1.0
     eta_e: float = 1.0
     chi_e: float = 0.0
+    kappa_i: float = 0.0
+    r_e: float = 0.0
+    demand_diverts: float = 0.0
     admissibility_status: str = "inside_A"
