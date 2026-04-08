@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 from avn.sweep import TrancheRunResult, analyze_only, execute_tranche_slice, main, run_tranche
 from avn.sweep_analysis import (
@@ -13,7 +16,9 @@ from avn.sweep_analysis import (
     analyze_phase_boundaries,
     write_aggregate_csv,
     write_cross_tranche_outputs,
+    write_global_phase_map_json,
     write_phase_boundaries_json,
+    write_transition_regions_json,
 )
 from avn.sweep_tranches import SeedPolicy, SweepAxis, TrancheDefinition, generate_tranche_slices, get_built_in_tranches
 
@@ -165,6 +170,7 @@ def test_aggregation_and_boundary_analysis_from_fixtures(tmp_path: Path) -> None
     aggregate_csv_path = write_aggregate_csv(tmp_path / "load_analysis", "load", load_results)
     phase_payload = analyze_phase_boundaries("load", load_results)
     phase_json_path = write_phase_boundaries_json(tmp_path / "load_analysis", "load", load_results)
+    transition_regions_path = write_transition_regions_json(tmp_path / "load_analysis", "load", load_results)
 
     comms_results = [
         _fixture_slice_result(
@@ -193,6 +199,7 @@ def test_aggregation_and_boundary_analysis_from_fixtures(tmp_path: Path) -> None
 
     assert aggregate_csv_path.exists()
     assert phase_json_path.exists()
+    assert transition_regions_path.exists()
     assert phase_payload["failure_mechanism_counts"]["CORRIDOR_CONGESTION"] == 2
     assert phase_payload["failure_mechanism_counts"]["NODE_SATURATION"] == 1
     assert any(item["axis"] == "modifiers.demand_multiplier" for item in phase_payload["parameter_sensitivity"])
@@ -204,6 +211,295 @@ def test_aggregation_and_boundary_analysis_from_fixtures(tmp_path: Path) -> None
     assert matrix_path.exists()
     assert comparison_path.exists()
     assert summary_path.exists()
+
+    phase_json_payload = json.loads(phase_json_path.read_text(encoding="utf-8"))
+    transition_regions_payload = json.loads(transition_regions_path.read_text(encoding="utf-8"))
+    comparison_payload = json.loads(comparison_path.read_text(encoding="utf-8"))
+
+    assert phase_json_payload["artifact_type"] == "phase_boundaries"
+    assert phase_json_payload["analysis_contract_version"] == 2
+    assert phase_json_payload["scope"] == "local_tranche"
+    assert transition_regions_payload["artifact_type"] == "transition_regions"
+    assert transition_regions_payload["analysis_contract_version"] == 2
+    assert transition_regions_payload["scope"] == "local_tranche"
+    assert comparison_payload["artifact_type"] == "tranche_comparison"
+    assert comparison_payload["analysis_contract_version"] == 2
+    assert comparison_payload["scope"] == "cross_tranche"
+    assert phase_json_payload["summary"]["slice_count"] == 3
+    assert phase_json_payload["summary"]["dominant_mechanism"] == "CORRIDOR_CONGESTION"
+    assert phase_json_payload["summary"]["switch_count"] == len(phase_json_payload["dominant_failure_switches"])
+    assert phase_json_payload["summary"]["governed_transition_boundary_count"] == len(
+        phase_json_payload["governed_transition_boundaries"]
+    )
+    assert transition_regions_payload["summary"]["region_count"] == transition_regions_payload["region_count"]
+    assert transition_regions_payload["summary"]["axes"] == ["modifiers.demand_multiplier"]
+    assert transition_regions_payload["summary"]["threshold_estimate_count"] == len(
+        [
+            region
+            for region in transition_regions_payload["regions"]
+            if "estimated_threshold" in region
+        ]
+    )
+    assert comparison_payload["summary"]["tranche_count"] == 2
+    assert comparison_payload["summary"]["total_slice_count"] == 5
+    assert comparison_payload["summary"]["fastest_tranche"]["tranche_name"] == "comms"
+    assert comparison_payload["summary"]["per_tranche_dominant_mechanisms"] == {
+        "comms": "COMMS_FAILURE",
+        "load": "CORRIDOR_CONGESTION",
+    }
+
+
+def test_cross_tranche_summary_quantifies_coupled_ordering_shifts(tmp_path: Path) -> None:
+    load_results = [
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="load",
+            slice_id="load_shift_a",
+            mechanism="corridor_capacity_exceeded",
+            axis_value=1.0,
+            exit_time=80.0,
+            exit_cause="corridor_load_ratio",
+        ),
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="load",
+            slice_id="load_shift_b",
+            mechanism="corridor_capacity_exceeded",
+            axis_value=1.2,
+            exit_time=74.0,
+            exit_cause="corridor_load_ratio",
+        ),
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="load",
+            slice_id="load_shift_c",
+            mechanism="node_service_collapse",
+            axis_value=1.5,
+            exit_time=62.0,
+            exit_cause="queue_ratio",
+        ),
+    ]
+    comms_results = [
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="comms",
+            slice_id="comms_shift_a",
+            mechanism="stale_information_instability",
+            axis_value=0.9,
+            exit_time=64.0,
+            exit_cause="stale_state_exposure",
+        ),
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="comms",
+            slice_id="comms_shift_b",
+            mechanism="stale_information_instability",
+            axis_value=1.1,
+            exit_time=58.0,
+            exit_cause="stale_state_exposure",
+        ),
+    ]
+    trust_results = [
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="trust",
+            slice_id="trust_shift_a",
+            mechanism="trust_breakdown",
+            axis_value=0.8,
+            exit_time=76.0,
+            exit_cause="unsafe_admission_count",
+        ),
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="trust",
+            slice_id="trust_shift_b",
+            mechanism="trust_breakdown",
+            axis_value=1.0,
+            exit_time=71.0,
+            exit_cause="unsafe_admission_count",
+        ),
+    ]
+    coupled_results = [
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="coupled",
+            slice_id="coupled_shift_a",
+            mechanism="stale_information_instability",
+            axis_value=1.0,
+            exit_time=57.0,
+            exit_cause="stale_state_exposure",
+        ),
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="coupled",
+            slice_id="coupled_shift_b",
+            mechanism="stale_information_instability",
+            axis_value=1.2,
+            exit_time=53.0,
+            exit_cause="stale_state_exposure",
+        ),
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="coupled",
+            slice_id="coupled_shift_c",
+            mechanism="corridor_capacity_exceeded",
+            axis_value=1.4,
+            exit_time=49.0,
+            exit_cause="corridor_load_ratio",
+        ),
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="coupled",
+            slice_id="coupled_shift_d",
+            mechanism="coupled_failure_indeterminate",
+            axis_value=1.6,
+            exit_time=45.0,
+            exit_cause="reroute_delay",
+        ),
+    ]
+
+    _, _, summary_path = write_cross_tranche_outputs(
+        tmp_path / "global_analysis_shifted",
+        {
+            "load": load_results,
+            "comms": comms_results,
+            "trust": trust_results,
+            "coupled": coupled_results,
+        },
+    )
+
+    summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    mixed = summary_payload["mixed_stress_summary"]
+    shift_records = {
+        entry["mechanism"]: entry
+        for entry in mixed["mechanism_shift_table"]
+    }
+
+    assert summary_payload["artifact_type"] == "cross_tranche_summary"
+    assert summary_payload["analysis_contract_version"] == 2
+    assert summary_payload["scope"] == "cross_tranche"
+    assert mixed["coupled_primary_mechanism"] == "COMMS_FAILURE"
+    assert mixed["isolated_primary_mechanism_counts"] == {
+        "COMMS_FAILURE": 1,
+        "CORRIDOR_CONGESTION": 1,
+        "TRUST_FAILURE": 1,
+    }
+    assert mixed["isolated_mean_ordering"][:3] == [
+        "COMMS_FAILURE",
+        "TRUST_FAILURE",
+        "CORRIDOR_CONGESTION",
+    ]
+    assert mixed["ordering_shift_detected"] is True
+    assert mixed["ordering_shift_magnitude"] == 1
+    assert mixed["emergent_mechanisms"] == ["REROUTE_CASCADE"]
+    assert mixed["suppressed_mechanisms"] == ["NODE_SATURATION", "TRUST_FAILURE"]
+    assert mixed["isolated_mean_mechanism_proportions"]["TRUST_FAILURE"] == pytest.approx(1.0 / 3.0)
+    assert shift_records["CORRIDOR_CONGESTION"]["coupled_rank"] == 2
+    assert shift_records["CORRIDOR_CONGESTION"]["isolated_mean_rank"] == 3
+    assert shift_records["CORRIDOR_CONGESTION"]["rank_shift"] == 1
+    assert shift_records["REROUTE_CASCADE"]["isolated_mean_rank"] is None
+    assert shift_records["REROUTE_CASCADE"]["share_delta"] == pytest.approx(0.25)
+    assert summary_payload["summary"] == {
+        "fastest_mechanism_count": 5,
+        "fastest_tranche_counts": {
+            "coupled": 3,
+            "load": 1,
+            "trust": 1,
+        },
+        "fastest_tranche_ordering": ["coupled", "load", "trust"],
+        "mechanisms_with_fastest_tranche": {
+            "coupled": ["COMMS_FAILURE", "CORRIDOR_CONGESTION", "REROUTE_CASCADE"],
+            "load": ["NODE_SATURATION"],
+            "trust": ["TRUST_FAILURE"],
+        },
+        "coupled_primary_mechanism": "COMMS_FAILURE",
+        "ordering_shift_detected": True,
+        "ordering_shift_magnitude": 1,
+        "emergent_mechanism_count": 1,
+        "emergent_mechanisms": ["REROUTE_CASCADE"],
+        "suppressed_mechanism_count": 2,
+        "suppressed_mechanisms": ["NODE_SATURATION", "TRUST_FAILURE"],
+    }
+
+
+def test_global_phase_map_includes_aggregate_summary(tmp_path: Path) -> None:
+    load_results = [
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="load",
+            slice_id="load_global_a",
+            mechanism="corridor_capacity_exceeded",
+            axis_value=1.0,
+            exit_time=80.0,
+            exit_cause="corridor_load_ratio",
+        ),
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="load",
+            slice_id="load_global_b",
+            mechanism="node_service_collapse",
+            axis_value=1.6,
+            exit_time=60.0,
+            exit_cause="queue_ratio",
+        ),
+    ]
+    comms_results = [
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="comms",
+            slice_id="comms_global_a",
+            mechanism="stale_information_instability",
+            axis_value=0.9,
+            exit_time=58.0,
+            exit_cause="stale_state_exposure",
+        ),
+        _fixture_slice_result(
+            tmp_path,
+            tranche_name="comms",
+            slice_id="comms_global_b",
+            mechanism="stale_information_instability",
+            axis_value=1.1,
+            exit_time=55.0,
+            exit_cause="stale_state_exposure",
+        ),
+    ]
+
+    global_phase_map_path = write_global_phase_map_json(
+        tmp_path / "global_phase_map",
+        {
+            "load": load_results,
+            "comms": comms_results,
+        },
+    )
+
+    payload = json.loads(global_phase_map_path.read_text(encoding="utf-8"))
+    summary = payload["summary"]
+
+    assert payload["artifact_type"] == "global_phase_map"
+    assert payload["analysis_contract_version"] == 2
+    assert payload["scope"] == "cross_tranche"
+    assert summary["tranche_count"] == 2
+    assert summary["total_point_count"] == 4
+    assert summary["axis_count"] == 1
+    assert summary["axes"] == ["modifiers.demand_multiplier"]
+    assert summary["tranche_point_counts"] == {
+        "comms": 2,
+        "load": 2,
+    }
+    assert summary["dominant_mechanism_counts"] == {
+        "COMMS_FAILURE": 1,
+        "CORRIDOR_CONGESTION": 1,
+    }
+    assert summary["dominant_mechanism_ordering"] == [
+        "COMMS_FAILURE",
+        "CORRIDOR_CONGESTION",
+    ]
+    assert summary["per_tranche_dominant_mechanisms"] == {
+        "comms": "COMMS_FAILURE",
+        "load": "CORRIDOR_CONGESTION",
+    }
+    assert payload["tranches"]["load"]["summary"]["point_count"] == 2
+    assert payload["tranches"]["comms"]["summary"]["dominant_mechanism"] == "COMMS_FAILURE"
 
 
 def test_run_tranche_and_analyze_only_round_trip(tmp_path: Path) -> None:

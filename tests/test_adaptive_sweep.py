@@ -36,10 +36,24 @@ from avn.sweep_analysis import (
     write_cross_tranche_promotion_decisions_json,
     write_cross_tranche_threshold_ledger_json,
     write_cross_tranche_thresholds_json,
+    write_phase_map_json,
     write_promotion_decisions_json,
     write_slice_results_json,
     write_threshold_estimates_json,
     write_threshold_ledger_json,
+    _admissibility_overlay_summary,
+    _cross_tranche_summary_summary,
+    _contradictions_summary,
+    _consistency_findings_summary,
+    _convergence_report_summary,
+    _global_phase_map_summary,
+    _phase_boundaries_summary,
+    _phase_map_summary,
+    _promotion_record_summary,
+    _slice_results_summary,
+    _threshold_catalog_summary,
+    _transition_regions_summary,
+    _tranche_comparison_summary,
 )
 from avn.sweep_tranches import SeedPolicy, SweepAxis, TrancheDefinition, TrancheSlice
 
@@ -489,6 +503,187 @@ def test_convergence_stopping_condition() -> None:
     assert report["converged"] is True
     assert report["iterations"][-1]["converged"] is True
     assert report["iterations"][-1]["boundary_shift"] == 0.02
+
+
+def test_build_phase_space_outputs_attach_phase_and_runtime_summaries(tmp_path: Path) -> None:
+    results = [
+        _result_for_slice(
+            tmp_path,
+            tranche_name="synthetic",
+            slice_definition=TrancheSlice(
+                slice_id="summary_a",
+                tranche_name="synthetic",
+                seed=1,
+                resolved_params={"alpha": 0.0},
+                base_config_path=tmp_path / "synthetic.toml",
+            ),
+            mechanism="corridor_capacity_exceeded",
+            force_admissible=True,
+        ),
+        _result_for_slice(
+            tmp_path,
+            tranche_name="synthetic",
+            slice_definition=TrancheSlice(
+                slice_id="summary_b",
+                tranche_name="synthetic",
+                seed=2,
+                resolved_params={"alpha": 0.5},
+                base_config_path=tmp_path / "synthetic.toml",
+            ),
+            mechanism="node_service_collapse",
+        ),
+        _result_for_slice(
+            tmp_path,
+            tranche_name="synthetic",
+            slice_definition=TrancheSlice(
+                slice_id="summary_c",
+                tranche_name="synthetic",
+                seed=3,
+                resolved_params={"alpha": 1.0},
+                base_config_path=tmp_path / "synthetic.toml",
+            ),
+            mechanism="node_service_collapse",
+            force_admissible=True,
+        ),
+    ]
+
+    payload = build_phase_space_outputs(
+        "synthetic",
+        results,
+        adaptive_payload={
+            "enabled": True,
+            "max_iterations": 2,
+            "convergence_threshold": 0.2,
+            "stopping_reason": "converged",
+            "iterations": [
+                {"iteration": 0, "executed_slice_ids": ["summary_a", "summary_b"]},
+                {"iteration": 1, "executed_slice_ids": ["summary_c"]},
+            ],
+        },
+    )
+
+    phase_summary = payload["phase_map"]["summary"]
+    overlay_summary = payload["admissibility_overlay"]["summary"]
+    convergence_summary = payload["convergence_report"]["summary"]
+
+    assert payload["phase_map"]["artifact_type"] == "phase_map"
+    assert payload["phase_map"]["analysis_contract_version"] == 2
+    assert payload["phase_map"]["scope"] == "local_tranche"
+    assert payload["phase_map"]["tranche_name"] == "synthetic"
+    assert payload["transition_regions"]["artifact_type"] == "transition_regions"
+    assert payload["transition_regions"]["scope"] == "local_tranche"
+    assert payload["admissibility_overlay"]["artifact_type"] == "admissibility_overlay"
+    assert payload["admissibility_overlay"]["analysis_contract_version"] == 2
+    assert payload["admissibility_overlay"]["scope"] == "local_tranche"
+    assert payload["convergence_report"]["artifact_type"] == "convergence_report"
+    assert payload["convergence_report"]["analysis_contract_version"] == 2
+    assert payload["convergence_report"]["tranche_name"] == "synthetic"
+    assert payload["convergence_report"]["scope"] == "local_tranche"
+    assert phase_summary["point_count"] == payload["phase_map"]["point_count"]
+    assert phase_summary["axis_count"] == len(payload["phase_map"]["axes"])
+    assert phase_summary["dominant_mechanism"] == "NODE_SATURATION"
+    assert sum(phase_summary["admissibility_state_counts"].values()) == payload["phase_map"]["point_count"]
+    assert overlay_summary["point_label_count"] == len(payload["admissibility_overlay"]["point_labels"])
+    assert sum(overlay_summary["state_region_counts"].values()) == (
+        len(payload["admissibility_overlay"]["admissible_region_candidates"])
+        + len(payload["admissibility_overlay"]["inadmissible_region_candidates"])
+        + len(payload["admissibility_overlay"]["unresolved_regions"])
+    )
+    assert convergence_summary["iteration_count"] == len(payload["convergence_report"]["iterations"])
+    assert convergence_summary["stopping_reason"] == "converged"
+    assert convergence_summary["final_iteration"]["cumulative_slice_count"] == 3
+
+
+def test_slice_results_payload_includes_summary(tmp_path: Path) -> None:
+    tranche = _synthetic_tranche(tmp_path)
+    results = [
+        _result_for_slice(
+            tmp_path,
+            tranche_name=tranche.tranche_name,
+            slice_definition=TrancheSlice(
+                slice_id="slice_summary_a",
+                tranche_name=tranche.tranche_name,
+                seed=1,
+                resolved_params={"alpha": 0.0},
+                base_config_path=tranche.base_config_path,
+            ),
+            mechanism="corridor_capacity_exceeded",
+        ),
+        _result_for_slice(
+            tmp_path,
+            tranche_name=tranche.tranche_name,
+            slice_definition=TrancheSlice(
+                slice_id="slice_summary_b",
+                tranche_name=tranche.tranche_name,
+                seed=2,
+                resolved_params={"alpha": 0.5},
+                base_config_path=tranche.base_config_path,
+            ),
+            mechanism="node_service_collapse",
+            force_admissible=True,
+        ),
+        _result_for_slice(
+            tmp_path,
+            tranche_name=tranche.tranche_name,
+            slice_definition=TrancheSlice(
+                slice_id="slice_summary_c",
+                tranche_name=tranche.tranche_name,
+                seed=3,
+                resolved_params={"alpha": 1.0},
+                base_config_path=tranche.base_config_path,
+            ),
+            mechanism="node_service_collapse",
+        ),
+    ]
+    output_dir = tmp_path / "slice_summary_output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    write_slice_results_json(
+        output_dir,
+        tranche,
+        results,
+        adaptive_payload={
+            "enabled": True,
+            "iterations": [
+                {"iteration": 0, "executed_slice_ids": ["slice_summary_a", "slice_summary_b"]},
+                {"iteration": 1, "executed_slice_ids": ["slice_summary_c"]},
+            ],
+        },
+    )
+
+    payload = json.loads((output_dir / "slice_results.json").read_text(encoding="utf-8"))
+    summary = payload["summary"]
+
+    assert payload["artifact_type"] == "slice_results"
+    assert payload["analysis_contract_version"] == 2
+    assert payload["scope"] == "local_tranche"
+    assert payload["tranche_name"] == tranche.tranche_name
+    assert summary["slice_count"] == len(payload["results"])
+    assert summary["dominant_mechanism"] == "NODE_SATURATION"
+    assert summary["dominant_mechanism_counts"] == {
+        "CORRIDOR_CONGESTION": 1,
+        "NODE_SATURATION": 2,
+    }
+    assert summary["safe_region_exit_distribution"] == {
+        "corridor_load_ratio": 1,
+        "no_exit": 1,
+        "queue_ratio": 1,
+    }
+    assert summary["replay_hash_coverage"]["with_replay_hash_count"] == len(payload["results"])
+    assert summary["replay_hash_coverage"]["missing_replay_hash_count"] == 0
+    assert summary["replay_hash_coverage"]["unique_replay_hash_count"] == len(payload["results"])
+    assert summary["adaptive_enabled"] is True
+    assert summary["adaptive_iteration_count"] == 2
+    assert summary["threshold_count"] == len(payload["thresholds"])
+    assert summary["promoted_threshold_count"] == sum(
+        1
+        for record in payload["thresholds"].values()
+        if record["promotion_state"]["promoted"]
+    )
+    assert summary["contradiction_threshold_count"] == sum(
+        1
+        for record in payload["thresholds"].values()
+        if record["contradictions"]
+    )
 
 
 def test_analyze_only_rebuilds_adaptive_artifacts(tmp_path: Path) -> None:
@@ -1697,6 +1892,7 @@ def test_governed_artifact_round_trips_preserve_canonical_shape(tmp_path: Path) 
     local_output.mkdir(parents=True, exist_ok=True)
 
     local_paths = [
+        write_phase_map_json(local_output, "synthetic", local_results),
         write_threshold_estimates_json(local_output, "synthetic", local_results),
         write_threshold_ledger_json(local_output, "synthetic", local_results),
         write_promotion_decisions_json(local_output, "synthetic", local_results),
@@ -1706,9 +1902,56 @@ def test_governed_artifact_round_trips_preserve_canonical_shape(tmp_path: Path) 
         path.name: _canonical_round_trip(json.loads(path.read_text(encoding="utf-8")))
         for path in local_paths
     }
+    assert local_payloads["phase_map.json"]["artifact_type"] == "phase_map"
+    assert local_payloads["phase_map.json"]["analysis_contract_version"] == 2
+    assert local_payloads["phase_map.json"]["scope"] == "local_tranche"
+    assert local_payloads["phase_map.json"]["tranche_name"] == "synthetic"
+    assert local_payloads["threshold_estimates.json"]["artifact_type"] == "threshold_estimates"
     assert local_payloads["threshold_estimates.json"]["thresholds"]["rho_c"]["mechanism_leakage_sources"] is not None
+    assert local_payloads["threshold_estimates.json"]["summary"]["threshold_count"] == len(
+        local_payloads["threshold_estimates.json"]["thresholds"]
+    )
+    assert (
+        local_payloads["threshold_estimates.json"]["summary"]["promoted_count"]
+        + local_payloads["threshold_estimates.json"]["summary"]["blocked_count"]
+        + local_payloads["threshold_estimates.json"]["summary"]["unknown_promotion_count"]
+        == len(local_payloads["threshold_estimates.json"]["thresholds"])
+    )
+    assert local_payloads["threshold_estimates.json"]["summary"]["contradiction_threshold_count"] == len(
+        local_payloads["threshold_estimates.json"]["summary"]["contradiction_thresholds"]
+    )
+    assert local_payloads["threshold_ledger.json"]["artifact_type"] == "threshold_ledger"
     assert local_payloads["threshold_ledger.json"]["promotion_history"]
+    assert local_payloads["promotion_decisions.json"]["artifact_type"] == "promotion_decisions"
     assert local_payloads["promotion_decisions.json"]["decisions"][0]["mechanism_leakage_score"] >= 0.0
+    assert local_payloads["threshold_ledger.json"]["summary"]["record_count"] == len(
+        local_payloads["threshold_ledger.json"]["entries"]
+    )
+    assert (
+        local_payloads["threshold_ledger.json"]["summary"]["promoted_count"]
+        + local_payloads["threshold_ledger.json"]["summary"]["blocked_count"]
+        == len(local_payloads["threshold_ledger.json"]["entries"])
+    )
+    assert local_payloads["threshold_ledger.json"]["summary"]["blocker_counts"] == (
+        local_payloads["threshold_ledger.json"]["summary"]["promotion_blocker_counts"]
+    )
+    assert local_payloads["threshold_ledger.json"]["summary"]["contradiction_thresholds"] == (
+        local_payloads["threshold_ledger.json"]["summary"]["thresholds_with_contradictions"]
+    )
+    assert local_payloads["promotion_decisions.json"]["summary"]["record_count"] == len(
+        local_payloads["promotion_decisions.json"]["decisions"]
+    )
+    assert (
+        local_payloads["promotion_decisions.json"]["summary"]["acceptance_counts"].get("accepted", 0)
+        + local_payloads["promotion_decisions.json"]["summary"]["acceptance_counts"].get("rejected", 0)
+        == len(local_payloads["promotion_decisions.json"]["decisions"])
+    )
+    assert local_payloads["promotion_decisions.json"]["summary"]["accepted_count"] == (
+        local_payloads["promotion_decisions.json"]["summary"]["acceptance_counts"].get("accepted", 0)
+    )
+    assert local_payloads["promotion_decisions.json"]["summary"]["accepted_count"] == len(
+        local_payloads["promotion_decisions.json"]["summary"]["accepted_thresholds"]
+    )
 
     cross_results = {
         "load": _governed_round_trip_results(tmp_path / "load_results", "load"),
@@ -1727,9 +1970,23 @@ def test_governed_artifact_round_trips_preserve_canonical_shape(tmp_path: Path) 
         path.name: _canonical_round_trip(json.loads(path.read_text(encoding="utf-8")))
         for path in cross_paths
     }
+    assert cross_payloads["cross_tranche_thresholds.json"]["artifact_type"] == "cross_tranche_thresholds"
     assert cross_payloads["cross_tranche_thresholds.json"]["global_thresholds"]["rho_c"][
         "mechanism_leakage_sources"
     ] is not None
+    assert cross_payloads["cross_tranche_thresholds.json"]["summary"]["threshold_count"] == len(
+        cross_payloads["cross_tranche_thresholds.json"]["global_thresholds"]
+    )
+    assert cross_payloads["cross_tranche_thresholds.json"]["promotion_summary"]["record_count"] == len(
+        cross_payloads["cross_tranche_thresholds.json"]["promotion_decisions"]
+    )
+    assert cross_payloads["cross_tranche_thresholds.json"]["consistency_summary"]["finding_count"] == len(
+        cross_payloads["cross_tranche_thresholds.json"]["consistency_findings"]
+    )
+    assert cross_payloads["cross_tranche_thresholds.json"]["contradiction_summary"]["contradiction_count"] == len(
+        cross_payloads["cross_tranche_thresholds.json"]["contradictions"]
+    )
+    assert cross_payloads["contradictions.json"]["artifact_type"] == "contradictions"
     assert cross_payloads["contradictions.json"]["global_thresholds"]["rho_c"][
         "promotion_governance_outcome"
     ] in {
@@ -1737,10 +1994,918 @@ def test_governed_artifact_round_trips_preserve_canonical_shape(tmp_path: Path) 
         PromotionGovernanceOutcome.LOCAL_BLOCK.value,
         PromotionGovernanceOutcome.GLOBAL_BLOCK.value,
     }
+    assert cross_payloads["contradictions.json"]["summary"]["contradiction_count"] == len(
+        cross_payloads["contradictions.json"]["contradictions"]
+    )
+    assert cross_payloads["contradictions.json"]["threshold_summary"]["threshold_count"] == len(
+        cross_payloads["contradictions.json"]["global_thresholds"]
+    )
+    assert cross_payloads["contradictions.json"]["promotion_summary"]["record_count"] == len(
+        cross_payloads["contradictions.json"]["promotion_decisions"]
+    )
+    assert cross_payloads["cross_tranche_threshold_ledger.json"]["artifact_type"] == "cross_tranche_threshold_ledger"
     assert cross_payloads["cross_tranche_threshold_ledger.json"]["entries"][0]["mechanism_leakage_score"] >= 0.0
+    assert (
+        cross_payloads["cross_tranche_promotion_decisions.json"]["artifact_type"]
+        == "cross_tranche_promotion_decisions"
+    )
     assert cross_payloads["cross_tranche_promotion_decisions.json"]["decisions"][0][
         "mechanism_leakage_sources"
     ] is not None
+    assert cross_payloads["cross_tranche_threshold_ledger.json"]["summary"]["record_count"] == len(
+        cross_payloads["cross_tranche_threshold_ledger.json"]["entries"]
+    )
+    assert cross_payloads["cross_tranche_promotion_decisions.json"]["summary"]["record_count"] == len(
+        cross_payloads["cross_tranche_promotion_decisions.json"]["decisions"]
+    )
+    assert cross_payloads["cross_tranche_threshold_ledger.json"]["consistency_summary"]["finding_count"] == len(
+        cross_payloads["cross_tranche_threshold_ledger.json"]["consistency_findings"]
+    )
+    assert cross_payloads["cross_tranche_promotion_decisions.json"]["consistency_summary"]["finding_count"] == len(
+        cross_payloads["cross_tranche_promotion_decisions.json"]["consistency_findings"]
+    )
+    assert cross_payloads["cross_tranche_threshold_ledger.json"]["summary"]["blocker_counts"] == (
+        cross_payloads["cross_tranche_threshold_ledger.json"]["summary"]["promotion_blocker_counts"]
+    )
+    assert cross_payloads["cross_tranche_promotion_decisions.json"]["summary"]["accepted_count"] == len(
+        cross_payloads["cross_tranche_promotion_decisions.json"]["summary"]["accepted_thresholds"]
+    )
+    assert cross_payloads["cross_tranche_threshold_ledger.json"]["consistency_summary"]["finding_kind_counts"] == (
+        cross_payloads["cross_tranche_threshold_ledger.json"]["consistency_summary"]["kind_counts"]
+    )
+    assert cross_payloads["cross_tranche_threshold_ledger.json"]["consistency_summary"]["affected_threshold_count"] == len(
+        cross_payloads["cross_tranche_threshold_ledger.json"]["consistency_summary"]["affected_thresholds"]
+    )
+
+
+def test_promotion_record_summary_handles_sparse_records_with_stable_aliases() -> None:
+    summary = _promotion_record_summary(
+        [
+            {
+                "threshold": "rho_c",
+                "threshold_promotion_decision": "PROMOTED",
+                "promotion_blockers": [],
+                "promotion_governance_outcome": "ALLOW",
+                "status": "VALIDATED",
+                "evidence_type": "PHASE_DERIVED",
+                "accepted": True,
+                "contradictions": [],
+            },
+            {
+                "threshold": "lambda_c",
+                "threshold_promotion_decision": "BLOCKED_BY_NONMONOTONICITY",
+                "promotion_blockers": [
+                    "BLOCKED_BY_NONMONOTONICITY",
+                    "INSUFFICIENT_ADMISSIBLE_SUPPORT",
+                ],
+                "promotion_governance_outcome": "GLOBAL_BLOCK",
+                "status": "PROXY",
+                "evidence_type": "BOUNDED_ESTIMATE",
+                "accepted": False,
+                "contradictions": [{"contradiction_type": "NON_MONOTONIC_THRESHOLD"}],
+            },
+            {
+                "threshold": "tau_c",
+                "promotion_blockers": [],
+                "contradictions": [],
+            },
+            {
+                "promotion_blockers": [],
+            },
+        ]
+    )
+
+    assert summary["record_count"] == 4
+    assert summary["threshold_record_count"] == 3
+    assert summary["missing_threshold_record_count"] == 1
+    assert summary["promoted_count"] == 1
+    assert summary["blocked_count"] == 1
+    assert summary["unknown_promotion_count"] == 1
+    assert summary["promoted_thresholds"] == ["rho_c"]
+    assert summary["blocked_thresholds"] == ["lambda_c"]
+    assert summary["unknown_promotion_thresholds"] == ["tau_c"]
+    assert summary["accepted_count"] == 1
+    assert summary["rejected_count"] == 1
+    assert summary["accepted_thresholds"] == ["rho_c"]
+    assert summary["rejected_thresholds"] == ["lambda_c"]
+    assert summary["blocker_counts"] == {
+        "BLOCKED_BY_NONMONOTONICITY": 1,
+        "INSUFFICIENT_ADMISSIBLE_SUPPORT": 1,
+    }
+    assert summary["blocker_counts"] == summary["promotion_blocker_counts"]
+    assert summary["governance_outcome_counts"] == {
+        "ALLOW": 1,
+        "GLOBAL_BLOCK": 1,
+    }
+    assert summary["status_counts"] == {
+        "PROXY": 1,
+        "VALIDATED": 1,
+    }
+    assert summary["evidence_type_counts"] == {
+        "BOUNDED_ESTIMATE": 1,
+        "PHASE_DERIVED": 1,
+    }
+    assert summary["contradiction_thresholds"] == ["lambda_c"]
+    assert summary["contradiction_thresholds"] == summary["thresholds_with_contradictions"]
+    assert summary["acceptance_counts"] == {
+        "accepted": 1,
+        "rejected": 1,
+    }
+
+    empty_summary = _promotion_record_summary([])
+    assert empty_summary == {
+        "record_count": 0,
+        "threshold_record_count": 0,
+        "missing_threshold_record_count": 0,
+        "promoted_count": 0,
+        "blocked_count": 0,
+        "unknown_promotion_count": 0,
+        "promoted_thresholds": [],
+        "blocked_thresholds": [],
+        "unknown_promotion_thresholds": [],
+        "accepted_count": 0,
+        "rejected_count": 0,
+        "accepted_thresholds": [],
+        "rejected_thresholds": [],
+        "contradiction_thresholds": [],
+        "thresholds_with_contradictions": [],
+        "blocker_counts": {},
+        "decision_counts": {},
+        "threshold_promotion_decision_counts": {},
+        "promotion_blocker_counts": {},
+        "governance_outcome_counts": {},
+        "status_counts": {},
+        "evidence_type_counts": {},
+        "acceptance_counts": {},
+    }
+
+
+def test_threshold_catalog_summary_handles_sparse_records_with_stable_aliases() -> None:
+    summary = _threshold_catalog_summary(
+        {
+            "rho_c": {
+                "estimate": 1.12,
+                "status": "VALIDATED",
+                "evidence_type": "PHASE_DERIVED",
+                "promotion_governance_outcome": "ALLOW",
+                "threshold_promotion_decision": "PROMOTED",
+                "promotion_state": {"decision": "promoted_to_tranche_boundary"},
+                "contradictions": [],
+                "is_isolated": True,
+                "normalized_threshold_value": 1.0,
+                "monotonicity_violation": False,
+            },
+            "lambda_c": {
+                "estimate": 0.84,
+                "status": "PROXY",
+                "evidence_type": "BOUNDED_ESTIMATE",
+                "promotion_governance_outcome": "LOCAL_BLOCK",
+                "threshold_promotion_decision": "BLOCKED_BY_NONMONOTONICITY",
+                "promotion_state": {"decision": "retained_as_non_monotonic_proxy"},
+                "contradictions": [{"contradiction_type": "NON_MONOTONIC_THRESHOLD"}],
+                "is_isolated": False,
+                "normalized_threshold_value": None,
+                "monotonicity_violation": True,
+            },
+            "tau_c": {
+                "status": "INSUFFICIENT_DATA",
+                "evidence_type": "PROXY_ONLY",
+                "promotion_state": {},
+                "contradictions": [],
+                "is_isolated": True,
+                "normalized_threshold_value": None,
+                "monotonicity_violation": False,
+            },
+        }
+    )
+
+    assert summary["threshold_count"] == 3
+    assert summary["estimated_threshold_count"] == 2
+    assert summary["missing_estimate_count"] == 1
+    assert summary["thresholds_with_estimates"] == ["lambda_c", "rho_c"]
+    assert summary["thresholds_without_estimates"] == ["tau_c"]
+    assert summary["promoted_count"] == 1
+    assert summary["blocked_count"] == 1
+    assert summary["unknown_promotion_count"] == 1
+    assert summary["promoted_thresholds"] == ["rho_c"]
+    assert summary["blocked_thresholds"] == ["lambda_c"]
+    assert summary["unknown_promotion_thresholds"] == ["tau_c"]
+    assert summary["contradiction_threshold_count"] == 1
+    assert summary["contradiction_thresholds"] == ["lambda_c"]
+    assert summary["contradiction_thresholds"] == summary["thresholds_with_contradictions"]
+    assert summary["isolated_threshold_count"] == 2
+    assert summary["isolated_thresholds"] == ["rho_c", "tau_c"]
+    assert summary["normalized_threshold_count"] == 1
+    assert summary["normalized_thresholds"] == ["rho_c"]
+    assert summary["monotonicity_violation_count"] == 1
+    assert summary["monotonicity_violation_thresholds"] == ["lambda_c"]
+    assert summary["status_counts"] == {
+        "INSUFFICIENT_DATA": 1,
+        "PROXY": 1,
+        "VALIDATED": 1,
+    }
+    assert summary["evidence_type_counts"] == {
+        "BOUNDED_ESTIMATE": 1,
+        "PHASE_DERIVED": 1,
+        "PROXY_ONLY": 1,
+    }
+    assert summary["promotion_governance_outcome_counts"] == {
+        "ALLOW": 1,
+        "LOCAL_BLOCK": 1,
+    }
+    assert summary["threshold_promotion_decision_counts"] == {
+        "BLOCKED_BY_NONMONOTONICITY": 1,
+        "PROMOTED": 1,
+    }
+    assert summary["decision_counts"] == {
+        "promoted_to_tranche_boundary": 1,
+        "retained_as_non_monotonic_proxy": 1,
+    }
+
+    empty_summary = _threshold_catalog_summary({})
+    assert empty_summary == {
+        "threshold_count": 0,
+        "estimated_threshold_count": 0,
+        "missing_estimate_count": 0,
+        "thresholds_with_estimates": [],
+        "thresholds_without_estimates": [],
+        "promoted_count": 0,
+        "blocked_count": 0,
+        "unknown_promotion_count": 0,
+        "promoted_thresholds": [],
+        "blocked_thresholds": [],
+        "unknown_promotion_thresholds": [],
+        "contradiction_threshold_count": 0,
+        "contradiction_thresholds": [],
+        "thresholds_with_contradictions": [],
+        "isolated_threshold_count": 0,
+        "isolated_thresholds": [],
+        "normalized_threshold_count": 0,
+        "normalized_thresholds": [],
+        "monotonicity_violation_count": 0,
+        "monotonicity_violation_thresholds": [],
+        "status_counts": {},
+        "evidence_type_counts": {},
+        "promotion_governance_outcome_counts": {},
+        "threshold_promotion_decision_counts": {},
+        "decision_counts": {},
+    }
+
+
+def test_phase_map_summary_handles_presence_and_absence() -> None:
+    summary = _phase_map_summary(
+        {
+            "point_count": 3,
+            "axes": ["alpha", "beta"],
+            "mechanism_counts": {
+                "COMMS_FAILURE": 1,
+                "NODE_SATURATION": 2,
+            },
+            "points": [
+                {"admissibility_state": "ADMISSIBLE"},
+                {"admissibility_state": "INADMISSIBLE"},
+                {"admissibility_state": "ADMISSIBLE"},
+            ],
+        }
+    )
+
+    assert summary == {
+        "point_count": 3,
+        "axis_count": 2,
+        "axes": ["alpha", "beta"],
+        "mechanism_count": 2,
+        "dominant_mechanism": "NODE_SATURATION",
+        "mechanism_ranking": ["NODE_SATURATION", "COMMS_FAILURE"],
+        "admissibility_state_counts": {
+            "ADMISSIBLE": 2,
+            "INADMISSIBLE": 1,
+        },
+    }
+
+    empty_summary = _phase_map_summary({})
+    assert empty_summary == {
+        "point_count": 0,
+        "axis_count": 0,
+        "axes": [],
+        "mechanism_count": 0,
+        "dominant_mechanism": None,
+        "mechanism_ranking": [],
+        "admissibility_state_counts": {},
+    }
+
+
+def test_transition_regions_summary_handles_presence_and_absence() -> None:
+    summary = _transition_regions_summary(
+        {
+            "regions": [
+                {
+                    "transition_axis": "alpha",
+                    "dominant_mechanism": "corridor_capacity_exceeded",
+                    "entropy": 0.4,
+                    "local_gradient": 0.2,
+                    "support_count": 3,
+                    "estimated_threshold": 0.5,
+                },
+                {
+                    "transition_axis": "alpha",
+                    "dominant_mechanism": "node_service_collapse",
+                    "entropy": 0.1,
+                    "local_gradient": 0.4,
+                    "support_count": 2,
+                },
+                {
+                    "transition_axis": "beta",
+                    "dominant_mechanism": "node_service_collapse",
+                    "entropy": 0.2,
+                    "support_count": 5,
+                    "estimated_threshold": 0.8,
+                },
+            ]
+        }
+    )
+
+    assert summary == {
+        "region_count": 3,
+        "axis_counts": {
+            "alpha": 2,
+            "beta": 1,
+        },
+        "axes": ["alpha", "beta"],
+        "dominant_mechanism_counts": {
+            "CORRIDOR_CONGESTION": 1,
+            "NODE_SATURATION": 2,
+        },
+        "dominant_mechanism_ordering": ["NODE_SATURATION", "CORRIDOR_CONGESTION"],
+        "max_entropy": 0.4,
+        "mean_entropy": pytest.approx((0.4 + 0.1 + 0.2) / 3.0),
+        "max_local_gradient": 0.4,
+        "max_support_count": 5,
+        "threshold_estimate_count": 2,
+    }
+
+    empty_summary = _transition_regions_summary({})
+    assert empty_summary == {
+        "region_count": 0,
+        "axis_counts": {},
+        "axes": [],
+        "dominant_mechanism_counts": {},
+        "dominant_mechanism_ordering": [],
+        "max_entropy": 0.0,
+        "mean_entropy": 0.0,
+        "max_local_gradient": 0.0,
+        "max_support_count": 0,
+        "threshold_estimate_count": 0,
+    }
+
+
+def test_admissibility_overlay_summary_handles_placeholder_and_reason_counts() -> None:
+    summary = _admissibility_overlay_summary(
+        {
+            "admissible_region_candidates": [
+                {"axis": "alpha", "support_count": 2, "reasons": ["ok"]},
+            ],
+            "inadmissible_region_candidates": [
+                {"axis": "alpha", "support_count": 1, "reasons": ["queue_limit"]},
+            ],
+            "unresolved_regions": [
+                {
+                    "axis": None,
+                    "support_count": 0,
+                    "reasons": ["no_intermediate_admissibility_region_observed"],
+                }
+            ],
+            "point_labels": [
+                {"state": "ADMISSIBLE", "reasons": ["ok"]},
+                {"state": "INADMISSIBLE", "reasons": ["queue_limit"]},
+                {"state": "ADMISSIBLE", "reasons": ["ok"]},
+            ],
+        }
+    )
+
+    assert summary["region_count"] == 3
+    assert summary["state_region_counts"] == {
+        "ADMISSIBLE": 1,
+        "INADMISSIBLE": 1,
+        "UNRESOLVED": 1,
+    }
+    assert summary["state_support_counts"] == {
+        "ADMISSIBLE": 2,
+        "INADMISSIBLE": 1,
+        "UNRESOLVED": 0,
+    }
+    assert summary["point_label_count"] == 3
+    assert summary["point_label_state_counts"] == {
+        "ADMISSIBLE": 2,
+        "INADMISSIBLE": 1,
+    }
+    assert summary["axis_count"] == 1
+    assert summary["axes"] == ["alpha"]
+    assert summary["reason_counts"] == {
+        "no_intermediate_admissibility_region_observed": 1,
+        "ok": 3,
+        "queue_limit": 2,
+    }
+    assert summary["placeholder_unresolved_region_count"] == 1
+
+    empty_summary = _admissibility_overlay_summary({})
+    assert empty_summary == {
+        "region_count": 0,
+        "state_region_counts": {},
+        "state_support_counts": {},
+        "point_label_count": 0,
+        "point_label_state_counts": {},
+        "axis_count": 0,
+        "axes": [],
+        "reason_counts": {},
+        "placeholder_unresolved_region_count": 0,
+    }
+
+
+def test_consistency_findings_summary_handles_presence_and_absence() -> None:
+    summary = _consistency_findings_summary(
+        [
+            {"threshold": "rho_c", "kind": "ORDERING_CONFLICT"},
+            {"threshold": "lambda_c", "kind": "ORDERING_CONFLICT"},
+            {"threshold": "rho_c", "kind": "STATUS_DIVERGENCE"},
+            {"kind": "STATUS_DIVERGENCE"},
+            {"threshold": "tau_c"},
+            {},
+        ]
+    )
+
+    assert summary["finding_count"] == 6
+    assert summary["kind_counts"] == {
+        "ORDERING_CONFLICT": 2,
+        "STATUS_DIVERGENCE": 2,
+    }
+    assert summary["finding_kind_counts"] == summary["kind_counts"]
+    assert summary["affected_thresholds"] == ["lambda_c", "rho_c", "tau_c"]
+    assert summary["affected_threshold_count"] == 3
+    assert summary["thresholds_with_findings"] == summary["affected_thresholds"]
+    assert summary["findings_without_threshold_count"] == 2
+    assert summary["findings_without_kind_count"] == 2
+
+    empty_summary = _consistency_findings_summary([])
+    assert empty_summary == {
+        "finding_count": 0,
+        "kind_counts": {},
+        "finding_kind_counts": {},
+        "affected_thresholds": [],
+        "affected_threshold_count": 0,
+        "thresholds_with_findings": [],
+        "findings_without_threshold_count": 0,
+        "findings_without_kind_count": 0,
+    }
+
+
+def test_convergence_and_global_phase_map_summaries_handle_presence_and_absence() -> None:
+    convergence_summary = _convergence_report_summary(
+        {
+            "converged": True,
+            "stopping_reason": "converged",
+            "iterations": [
+                {
+                    "iteration": 0,
+                    "cumulative_slice_count": 2,
+                    "transition_region_count": 1,
+                    "boundary_shift": 1.0,
+                    "classification_stability": 0.0,
+                    "converged": False,
+                },
+                {
+                    "iteration": 1,
+                    "cumulative_slice_count": 3,
+                    "transition_region_count": 1,
+                    "boundary_shift": 0.05,
+                    "classification_stability": 1.0,
+                    "converged": True,
+                },
+            ],
+        }
+    )
+
+    assert convergence_summary == {
+        "iteration_count": 2,
+        "converged": True,
+        "stopping_reason": "converged",
+        "converged_iteration": 1,
+        "final_iteration": {
+            "iteration": 1,
+            "cumulative_slice_count": 3,
+            "transition_region_count": 1,
+            "boundary_shift": 0.05,
+            "classification_stability": 1.0,
+            "converged": True,
+        },
+    }
+
+    empty_convergence_summary = _convergence_report_summary({})
+    assert empty_convergence_summary == {
+        "iteration_count": 0,
+        "converged": False,
+        "stopping_reason": None,
+        "converged_iteration": None,
+        "final_iteration": None,
+    }
+
+    global_summary = _global_phase_map_summary(
+        {
+            "comms": {
+                "point_count": 2,
+                "axes": ["gamma"],
+                "summary": {"dominant_mechanism": "COMMS_FAILURE"},
+            },
+            "load": {
+                "point_count": 3,
+                "axes": ["alpha"],
+                "summary": {"dominant_mechanism": "NODE_SATURATION"},
+            },
+            "trust": {
+                "point_count": 1,
+                "axes": ["alpha", "trust"],
+                "summary": {"dominant_mechanism": "NODE_SATURATION"},
+            },
+        }
+    )
+
+    assert global_summary == {
+        "tranche_count": 3,
+        "total_point_count": 6,
+        "axes": ["alpha", "gamma", "trust"],
+        "axis_count": 3,
+        "tranche_point_counts": {
+            "comms": 2,
+            "load": 3,
+            "trust": 1,
+        },
+        "dominant_mechanism_counts": {
+            "COMMS_FAILURE": 1,
+            "NODE_SATURATION": 2,
+        },
+        "dominant_mechanism_ordering": ["NODE_SATURATION", "COMMS_FAILURE"],
+        "per_tranche_dominant_mechanisms": {
+            "comms": "COMMS_FAILURE",
+            "load": "NODE_SATURATION",
+            "trust": "NODE_SATURATION",
+        },
+    }
+
+    empty_global_summary = _global_phase_map_summary({})
+    assert empty_global_summary == {
+        "tranche_count": 0,
+        "total_point_count": 0,
+        "axes": [],
+        "axis_count": 0,
+        "tranche_point_counts": {},
+        "dominant_mechanism_counts": {},
+        "dominant_mechanism_ordering": [],
+        "per_tranche_dominant_mechanisms": {},
+    }
+
+
+def test_phase_boundaries_and_tranche_comparison_summaries_handle_presence_and_absence() -> None:
+    phase_boundaries_summary = _phase_boundaries_summary(
+        {
+            "slice_count": 4,
+            "failure_mechanism_counts": {
+                "corridor_capacity_exceeded": 1,
+                "node_service_collapse": 3,
+            },
+            "safe_region_exit_distribution": {
+                "corridor_load_ratio": 1,
+                "queue_ratio": 3,
+            },
+            "parameter_sensitivity": [{"axis": "alpha"}, {"axis": "beta"}],
+            "dominant_failure_regions": [{}, {}],
+            "dominant_failure_switches": [{}, {}, {}],
+            "monotonic_threshold_regions": [{}],
+            "governed_transition_boundaries": [{}, {}],
+            "rejected_transition_candidates": [{}],
+        }
+    )
+
+    assert phase_boundaries_summary == {
+        "slice_count": 4,
+        "dominant_mechanism": "NODE_SATURATION",
+        "dominant_mechanism_counts": {
+            "CORRIDOR_CONGESTION": 1,
+            "NODE_SATURATION": 3,
+        },
+        "parameter_sensitivity_axis_count": 2,
+        "dominant_failure_region_count": 2,
+        "switch_count": 3,
+        "monotonic_threshold_region_count": 1,
+        "governed_transition_boundary_count": 2,
+        "rejected_transition_candidate_count": 1,
+        "safe_region_exit_count": 4,
+    }
+
+    empty_phase_boundaries_summary = _phase_boundaries_summary({})
+    assert empty_phase_boundaries_summary == {
+        "slice_count": 0,
+        "dominant_mechanism": None,
+        "dominant_mechanism_counts": {},
+        "parameter_sensitivity_axis_count": 0,
+        "dominant_failure_region_count": 0,
+        "switch_count": 0,
+        "monotonic_threshold_region_count": 0,
+        "governed_transition_boundary_count": 0,
+        "rejected_transition_candidate_count": 0,
+        "safe_region_exit_count": 0,
+    }
+
+    tranche_comparison_summary = _tranche_comparison_summary(
+        {
+            "comms": {
+                "slice_count": 2,
+                "dominant_mechanism": "COMMS_FAILURE",
+                "mean_time_to_first_failure": 55.0,
+            },
+            "load": {
+                "slice_count": 3,
+                "dominant_mechanism": "corridor_capacity_exceeded",
+                "mean_time_to_first_failure": 70.0,
+            },
+            "trust": {
+                "slice_count": 1,
+                "dominant_mechanism": "TRUST_FAILURE",
+                "mean_time_to_first_failure": 60.0,
+            },
+        }
+    )
+
+    assert tranche_comparison_summary == {
+        "tranche_count": 3,
+        "total_slice_count": 6,
+        "dominant_mechanism_counts": {
+            "COMMS_FAILURE": 1,
+            "CORRIDOR_CONGESTION": 1,
+            "TRUST_FAILURE": 1,
+        },
+        "dominant_mechanism_ordering": [
+            "COMMS_FAILURE",
+            "CORRIDOR_CONGESTION",
+            "TRUST_FAILURE",
+        ],
+        "per_tranche_dominant_mechanisms": {
+            "comms": "COMMS_FAILURE",
+            "load": "CORRIDOR_CONGESTION",
+            "trust": "TRUST_FAILURE",
+        },
+        "fastest_tranche": {
+            "tranche_name": "comms",
+            "mean_time_to_first_failure": 55.0,
+        },
+    }
+
+    empty_tranche_comparison_summary = _tranche_comparison_summary({})
+    assert empty_tranche_comparison_summary == {
+        "tranche_count": 0,
+        "total_slice_count": 0,
+        "dominant_mechanism_counts": {},
+        "dominant_mechanism_ordering": [],
+        "per_tranche_dominant_mechanisms": {},
+        "fastest_tranche": None,
+    }
+
+
+def test_slice_results_summary_handles_presence_and_absence() -> None:
+    summary = _slice_results_summary(
+        [
+            {
+                "dominant_failure_mode": "CORRIDOR_CONGESTION",
+                "safe_region_exit_cause": "corridor_load_ratio",
+                "time_to_first_failure": 80.0,
+                "safe_region_exit_time": 80.0,
+                "degraded_mode_dwell_time": 10.0,
+                "replay_hash": "hash-a",
+            },
+            {
+                "dominant_failure_mode": "node_service_collapse",
+                "safe_region_exit_cause": "",
+                "time_to_first_failure": 60.0,
+                "safe_region_exit_time": None,
+                "degraded_mode_dwell_time": 12.0,
+                "replay_hash": "hash-b",
+            },
+            {
+                "first_dominant_failure_mechanism": "stale_information_instability",
+                "safe_region_exit_cause": "stale_state_exposure",
+                "time_to_first_failure": 55.0,
+                "safe_region_exit_time": 55.0,
+                "degraded_mode_dwell_time": 14.0,
+            },
+        ],
+        {
+            "rho_c": {
+                "promotion_state": {"promoted": True},
+                "contradictions": [],
+            },
+            "lambda_c": {
+                "promotion_state": {"promoted": False},
+                "contradictions": [{"contradiction_type": "NON_MONOTONIC_THRESHOLD"}],
+            },
+        },
+        {
+            "enabled": True,
+            "iterations": [{"iteration": 0}, {"iteration": 1}],
+        },
+    )
+
+    assert summary["slice_count"] == 3
+    assert summary["dominant_mechanism"] == "COMMS_FAILURE"
+    assert summary["dominant_mechanism_counts"] == {
+        "COMMS_FAILURE": 1,
+        "CORRIDOR_CONGESTION": 1,
+        "NODE_SATURATION": 1,
+    }
+    assert summary["safe_region_exit_distribution"] == {
+        "corridor_load_ratio": 1,
+        "no_exit": 1,
+        "stale_state_exposure": 1,
+    }
+    assert summary["mean_time_to_first_failure"] == pytest.approx((80.0 + 60.0 + 55.0) / 3.0)
+    assert summary["median_time_to_first_failure"] == 60.0
+    assert summary["mean_safe_region_exit_time"] == pytest.approx((80.0 + 55.0) / 2.0)
+    assert summary["median_safe_region_exit_time"] == 67.5
+    assert summary["mean_degraded_mode_dwell_time"] == 12.0
+    assert summary["replay_hash_coverage"] == {
+        "with_replay_hash_count": 2,
+        "missing_replay_hash_count": 1,
+        "unique_replay_hash_count": 2,
+    }
+    assert summary["adaptive_enabled"] is True
+    assert summary["adaptive_iteration_count"] == 2
+    assert summary["threshold_count"] == 2
+    assert summary["promoted_threshold_count"] == 1
+    assert summary["contradiction_threshold_count"] == 1
+
+    empty_summary = _slice_results_summary([], {}, None)
+    assert empty_summary == {
+        "slice_count": 0,
+        "dominant_mechanism": None,
+        "dominant_mechanism_counts": {},
+        "safe_region_exit_distribution": {},
+        "mean_time_to_first_failure": None,
+        "median_time_to_first_failure": None,
+        "mean_safe_region_exit_time": None,
+        "median_safe_region_exit_time": None,
+        "mean_degraded_mode_dwell_time": None,
+        "replay_hash_coverage": {
+            "with_replay_hash_count": 0,
+            "missing_replay_hash_count": 0,
+            "unique_replay_hash_count": 0,
+        },
+        "adaptive_enabled": False,
+        "adaptive_iteration_count": 0,
+        "threshold_count": 0,
+        "promoted_threshold_count": 0,
+        "contradiction_threshold_count": 0,
+    }
+
+
+def test_cross_tranche_summary_summary_handles_presence_and_absence() -> None:
+    summary = _cross_tranche_summary_summary(
+        {
+            "COMMS_FAILURE": {"tranche_name": "comms", "mean_time_to_first_failure": 55.0},
+            "NODE_SATURATION": {"tranche_name": "load", "mean_time_to_first_failure": 60.0},
+            "corridor_capacity_exceeded": {"tranche_name": "load", "mean_time_to_first_failure": 65.0},
+        },
+        {
+            "coupled_primary_mechanism": "stale_information_instability",
+            "ordering_shift_detected": True,
+            "ordering_shift_magnitude": 2,
+            "emergent_mechanisms": ["REROUTE_CASCADE"],
+            "suppressed_mechanisms": ["node_service_collapse", "TRUST_FAILURE"],
+        },
+    )
+
+    assert summary == {
+        "fastest_mechanism_count": 3,
+        "fastest_tranche_counts": {
+            "comms": 1,
+            "load": 2,
+        },
+        "fastest_tranche_ordering": ["load", "comms"],
+        "mechanisms_with_fastest_tranche": {
+            "comms": ["COMMS_FAILURE"],
+            "load": ["CORRIDOR_CONGESTION", "NODE_SATURATION"],
+        },
+        "coupled_primary_mechanism": "COMMS_FAILURE",
+        "ordering_shift_detected": True,
+        "ordering_shift_magnitude": 2,
+        "emergent_mechanism_count": 1,
+        "emergent_mechanisms": ["REROUTE_CASCADE"],
+        "suppressed_mechanism_count": 2,
+        "suppressed_mechanisms": ["NODE_SATURATION", "TRUST_FAILURE"],
+    }
+
+    empty_summary = _cross_tranche_summary_summary({}, {})
+    assert empty_summary == {
+        "fastest_mechanism_count": 0,
+        "fastest_tranche_counts": {},
+        "fastest_tranche_ordering": [],
+        "mechanisms_with_fastest_tranche": {},
+        "coupled_primary_mechanism": None,
+        "ordering_shift_detected": False,
+        "ordering_shift_magnitude": 0,
+        "emergent_mechanism_count": 0,
+        "emergent_mechanisms": [],
+        "suppressed_mechanism_count": 0,
+        "suppressed_mechanisms": [],
+    }
+
+
+def test_contradictions_summary_handles_presence_and_absence() -> None:
+    summary = _contradictions_summary(
+        [
+            {
+                "threshold": "rho_c",
+                "contradiction_type": "CROSS_TRANCHE_CONFLICT",
+                "contradiction_severity": "BLOCKING",
+                "affected_tranches": ["load", "weather"],
+                "blocking": True,
+            },
+            {
+                "threshold": "lambda_c",
+                "contradiction_type": "NON_MONOTONIC_THRESHOLD",
+                "contradiction_severity": "BLOCKING",
+                "affected_tranches": ["load"],
+                "blocking": True,
+            },
+            {
+                "threshold": "rho_c",
+                "contradiction_type": "ENVELOPE_VIOLATION",
+                "contradiction_severity": "WARNING",
+                "affected_tranches": ["coupled"],
+                "blocking": False,
+            },
+            {
+                "contradiction_severity": "WARNING",
+                "affected_tranches": [],
+            },
+            {},
+        ]
+    )
+
+    assert summary["contradiction_count"] == 5
+    assert summary["contradiction_type_counts"] == {
+        "CROSS_TRANCHE_CONFLICT": 1,
+        "ENVELOPE_VIOLATION": 1,
+        "NON_MONOTONIC_THRESHOLD": 1,
+    }
+    assert summary["severity_counts"] == {
+        "BLOCKING": 2,
+        "WARNING": 2,
+    }
+    assert summary["affected_thresholds"] == ["lambda_c", "rho_c"]
+    assert summary["affected_threshold_count"] == 2
+    assert summary["affected_tranches"] == ["coupled", "load", "weather"]
+    assert summary["affected_tranche_count"] == 3
+    assert summary["blocking_count"] == 2
+    assert summary["non_blocking_count"] == 1
+    assert summary["contradictions_without_threshold_count"] == 2
+    assert summary["contradictions_without_type_count"] == 2
+
+    empty_summary = _contradictions_summary([])
+    assert empty_summary == {
+        "contradiction_count": 0,
+        "contradiction_type_counts": {},
+        "severity_counts": {},
+        "affected_thresholds": [],
+        "affected_threshold_count": 0,
+        "affected_tranches": [],
+        "affected_tranche_count": 0,
+        "blocking_count": 0,
+        "non_blocking_count": 0,
+        "contradictions_without_threshold_count": 0,
+        "contradictions_without_type_count": 0,
+    }
+
+
+def test_cross_tranche_consistency_summary_remains_zeroed_when_findings_absent(tmp_path: Path) -> None:
+    output_dir = tmp_path / "cross_tranche_no_findings"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = write_cross_tranche_threshold_ledger_json(
+        output_dir,
+        {
+            "load": _governed_round_trip_results(tmp_path / "single_tranche_results", "load"),
+        },
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    assert payload["consistency_findings"] == []
+    assert payload["consistency_summary"] == {
+        "finding_count": 0,
+        "kind_counts": {},
+        "finding_kind_counts": {},
+        "affected_thresholds": [],
+        "affected_threshold_count": 0,
+        "thresholds_with_findings": [],
+        "findings_without_threshold_count": 0,
+        "findings_without_kind_count": 0,
+    }
 
 
 def test_src_does_not_branch_on_contradiction_taxonomy_outside_thresholds() -> None:

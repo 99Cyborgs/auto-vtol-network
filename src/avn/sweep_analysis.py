@@ -469,7 +469,10 @@ def build_slice_results_payload(
     threshold_payload = phase_outputs["threshold_estimates"]
     threshold_payload = normalize_governed_artifact_payload(threshold_payload)
     payload = {
+        "artifact_type": "slice_results",
         "analysis_contract_version": 2,
+        "scope": "local_tranche",
+        "tranche_name": tranche.tranche_name,
         "tranche": tranche.to_dict(),
         "output_dir": str(output_dir.resolve()),
         "slice_count": len(results),
@@ -480,6 +483,11 @@ def build_slice_results_payload(
     }
     if adaptive_payload is not None:
         payload["adaptive"] = copy.deepcopy(adaptive_payload)
+    payload["summary"] = _slice_results_summary(
+        payload["results"],
+        payload["thresholds"],
+        payload.get("adaptive"),
+    )
     return payload
 
 
@@ -718,9 +726,18 @@ def write_phase_boundaries_json(output_dir: Path, tranche_name: str, results: li
         json.dump(
             {
                 **payload,
+                "artifact_type": "phase_boundaries",
                 "analysis_contract_version": 2,
+                "scope": "local_tranche",
                 "governed_transition_boundaries": promoted_boundaries,
                 "rejected_transition_candidates": rejected_candidates,
+                "summary": _phase_boundaries_summary(
+                    {
+                        **payload,
+                        "governed_transition_boundaries": promoted_boundaries,
+                        "rejected_transition_candidates": rejected_candidates,
+                    }
+                ),
             },
             handle,
             indent=2,
@@ -971,8 +988,18 @@ def build_phase_space_outputs(
     )
     thresholds = normalize_threshold_payload(thresholds)
     thresholds["promotion_history"] = promotion_history
+    thresholds["summary"] = _threshold_catalog_summary(thresholds["thresholds"])
     thresholds = normalize_governed_artifact_payload(thresholds)
+    thresholds["artifact_type"] = "threshold_estimates"
+    phase_map = phase_map_payload(tranche_name, phase_points)
+    phase_map["artifact_type"] = "phase_map"
+    phase_map["analysis_contract_version"] = 2
+    phase_map["scope"] = "local_tranche"
+    phase_map["summary"] = _phase_map_summary(phase_map)
     admissibility_overlay = build_admissibility_overlay(tranche_name, phase_points)
+    admissibility_overlay["artifact_type"] = "admissibility_overlay"
+    admissibility_overlay["scope"] = "local_tranche"
+    admissibility_overlay["summary"] = _admissibility_overlay_summary(admissibility_overlay)
     convergence_report = build_convergence_report(
         iteration_regions,
         convergence_threshold=convergence_threshold,
@@ -983,28 +1010,45 @@ def build_phase_space_outputs(
     )
     if adaptive_payload is not None and isinstance(adaptive_payload.get("stopping_reason"), str):
         convergence_report["stopping_reason"] = adaptive_payload["stopping_reason"]
+    convergence_report["artifact_type"] = "convergence_report"
+    convergence_report["analysis_contract_version"] = 2
+    convergence_report["tranche_name"] = tranche_name
+    convergence_report["scope"] = "local_tranche"
+    convergence_report["summary"] = _convergence_report_summary(convergence_report)
     return {
-        "phase_map": phase_map_payload(tranche_name, phase_points),
+        "phase_map": phase_map,
         "transition_regions": {
+            "artifact_type": "transition_regions",
             "analysis_contract_version": 2,
             "tranche_name": tranche_name,
+            "scope": "local_tranche",
             "region_count": len(transition_regions),
             "regions": [region.to_dict() for region in transition_regions],
+            "summary": _transition_regions_summary(
+                {
+                    "region_count": len(transition_regions),
+                    "regions": [region.to_dict() for region in transition_regions],
+                }
+            ),
         },
         "threshold_estimates": thresholds,
         "threshold_ledger": {
+            "artifact_type": "threshold_ledger",
             "analysis_contract_version": 2,
             "tranche_name": tranche_name,
             "scope": "local_tranche",
             "epistemic_note": thresholds["epistemic_note"],
             "entries": thresholds["threshold_ledger"],
             "promotion_history": thresholds["promotion_history"],
+            "summary": _promotion_record_summary(thresholds["threshold_ledger"]),
         },
         "promotion_decisions": {
+            "artifact_type": "promotion_decisions",
             "analysis_contract_version": 2,
             "tranche_name": tranche_name,
             "scope": "local_tranche",
             "decisions": thresholds["promotion_decisions"],
+            "summary": _promotion_record_summary(thresholds["promotion_decisions"]),
         },
         "admissibility_overlay": admissibility_overlay,
         "convergence_report": convergence_report,
@@ -1122,6 +1166,893 @@ def write_convergence_report_json(
     return path
 
 
+def _mean_mechanism_proportions(
+    tranche_summaries: dict[str, dict[str, object]],
+) -> dict[str, float]:
+    if not tranche_summaries:
+        return {}
+    return {
+        mechanism: statistics.fmean(
+            float(summary["mechanism_proportions"].get(mechanism, 0.0))
+            for summary in tranche_summaries.values()
+        )
+        for mechanism in FAILURE_MECHANISMS
+    }
+
+
+def _positive_mechanism_ordering(proportions: dict[str, float]) -> list[str]:
+    return [
+        mechanism
+        for mechanism, share in sorted(
+            ((mechanism, float(proportions.get(mechanism, 0.0))) for mechanism in FAILURE_MECHANISMS),
+            key=lambda item: (-item[1], item[0]),
+        )
+        if share > 0.0
+    ]
+
+
+def _mechanism_ranks(ordering: list[str]) -> dict[str, int]:
+    return {
+        mechanism: index + 1
+        for index, mechanism in enumerate(ordering)
+    }
+
+
+def _build_mixed_stress_summary(
+    summaries: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    if "coupled" not in summaries:
+        return {}
+
+    isolated_summaries = {
+        tranche_name: summary
+        for tranche_name, summary in summaries.items()
+        if tranche_name != "coupled"
+    }
+    if not isolated_summaries:
+        return {}
+
+    isolated_primary_counts = Counter(
+        str(summary["dominant_mechanism"])
+        for summary in isolated_summaries.values()
+    )
+    isolated_primary_ordering = [
+        mechanism
+        for mechanism, _count in sorted(isolated_primary_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    isolated_mean_proportions = _mean_mechanism_proportions(isolated_summaries)
+    isolated_mean_ordering = _positive_mechanism_ordering(isolated_mean_proportions)
+
+    coupled_summary = summaries["coupled"]
+    coupled_ordering = list(coupled_summary["mechanism_ranking"])
+    coupled_proportions = {
+        mechanism: float(coupled_summary["mechanism_proportions"].get(mechanism, 0.0))
+        for mechanism in FAILURE_MECHANISMS
+    }
+    coupled_ranks = _mechanism_ranks(coupled_ordering)
+    isolated_mean_ranks = _mechanism_ranks(isolated_mean_ordering)
+
+    mechanism_shift_table: list[dict[str, object]] = []
+    emergent_mechanisms: list[str] = []
+    suppressed_mechanisms: list[str] = []
+    for mechanism in FAILURE_MECHANISMS:
+        coupled_share = coupled_proportions.get(mechanism, 0.0)
+        isolated_mean_share = isolated_mean_proportions.get(mechanism, 0.0)
+        if coupled_share > 0.0 and isolated_mean_share == 0.0:
+            emergent_mechanisms.append(mechanism)
+        if coupled_share == 0.0 and isolated_mean_share > 0.0:
+            suppressed_mechanisms.append(mechanism)
+        if coupled_share == 0.0 and isolated_mean_share == 0.0:
+            continue
+        coupled_rank = coupled_ranks.get(mechanism)
+        isolated_mean_rank = isolated_mean_ranks.get(mechanism)
+        rank_shift = (
+            None
+            if coupled_rank is None or isolated_mean_rank is None
+            else isolated_mean_rank - coupled_rank
+        )
+        mechanism_shift_table.append(
+            {
+                "mechanism": mechanism,
+                "coupled_share": coupled_share,
+                "isolated_mean_share": isolated_mean_share,
+                "share_delta": coupled_share - isolated_mean_share,
+                "coupled_rank": coupled_rank,
+                "isolated_mean_rank": isolated_mean_rank,
+                "rank_shift": rank_shift,
+            }
+        )
+    mechanism_shift_table.sort(
+        key=lambda item: (-abs(float(item["share_delta"])), str(item["mechanism"]))
+    )
+
+    return {
+        "coupled_primary_mechanism": coupled_summary["dominant_mechanism"],
+        "coupled_mechanism_ranking": coupled_ordering,
+        "isolated_primary_mechanisms": {
+            tranche_name: summary["dominant_mechanism"]
+            for tranche_name, summary in isolated_summaries.items()
+        },
+        "isolated_primary_mechanism_counts": dict(sorted(isolated_primary_counts.items())),
+        "isolated_primary_ordering": isolated_primary_ordering,
+        "isolated_mean_mechanism_proportions": isolated_mean_proportions,
+        "isolated_mean_ordering": isolated_mean_ordering,
+        "mechanism_shift_table": mechanism_shift_table,
+        "emergent_mechanisms": emergent_mechanisms,
+        "suppressed_mechanisms": suppressed_mechanisms,
+        "ordering_shift_detected": coupled_ordering[:3] != isolated_primary_ordering[:3],
+        "ordering_shift_magnitude": sum(
+            abs(int(item["rank_shift"]))
+            for item in mechanism_shift_table
+            if item["rank_shift"] is not None
+        ),
+    }
+
+
+def _counter_payload(counter: Counter[str]) -> dict[str, int]:
+    return {
+        key: counter[key]
+        for key in sorted(counter)
+    }
+
+
+def _canonical_failure_mode_label(value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return LEGACY_TO_FAILURE_MODE.get(value, value)
+
+
+def _promotion_record_summary(records: list[dict[str, object]]) -> dict[str, object]:
+    decision_counts: Counter[str] = Counter()
+    threshold_promotion_decision_counts: Counter[str] = Counter()
+    promotion_blocker_counts: Counter[str] = Counter()
+    governance_outcome_counts: Counter[str] = Counter()
+    status_counts: Counter[str] = Counter()
+    evidence_type_counts: Counter[str] = Counter()
+    acceptance_counts: Counter[str] = Counter()
+    threshold_record_count = 0
+    missing_threshold_record_count = 0
+    promoted_thresholds: list[str] = []
+    blocked_thresholds: list[str] = []
+    unknown_promotion_thresholds: list[str] = []
+    accepted_thresholds: list[str] = []
+    rejected_thresholds: list[str] = []
+    thresholds_with_contradictions: list[str] = []
+
+    for record in records:
+        threshold = record.get("threshold")
+        threshold_name = str(threshold) if isinstance(threshold, str) and threshold else None
+        if threshold_name is None:
+            missing_threshold_record_count += 1
+        else:
+            threshold_record_count += 1
+
+        decision = record.get("decision")
+        if isinstance(decision, str) and decision:
+            decision_counts[decision] += 1
+
+        threshold_promotion_decision = record.get("threshold_promotion_decision")
+        if isinstance(threshold_promotion_decision, str) and threshold_promotion_decision:
+            threshold_promotion_decision_counts[threshold_promotion_decision] += 1
+
+        blockers = record.get("promotion_blockers", [])
+        if isinstance(blockers, (list, tuple)):
+            for blocker in blockers:
+                if isinstance(blocker, str) and blocker:
+                    promotion_blocker_counts[blocker] += 1
+
+        governance_outcome = record.get("promotion_governance_outcome")
+        if isinstance(governance_outcome, str) and governance_outcome:
+            governance_outcome_counts[governance_outcome] += 1
+
+        status = record.get("status")
+        if isinstance(status, str) and status:
+            status_counts[status] += 1
+
+        evidence_type = record.get("evidence_type")
+        if isinstance(evidence_type, str) and evidence_type:
+            evidence_type_counts[evidence_type] += 1
+
+        accepted = record.get("accepted")
+        if isinstance(accepted, bool):
+            acceptance_counts["accepted" if accepted else "rejected"] += 1
+            if threshold_name is not None:
+                if accepted:
+                    accepted_thresholds.append(threshold_name)
+                else:
+                    rejected_thresholds.append(threshold_name)
+
+        contradictions = record.get("contradictions", [])
+        if threshold_name is not None and isinstance(contradictions, (list, tuple)) and contradictions:
+            thresholds_with_contradictions.append(threshold_name)
+
+        if threshold_name is None:
+            continue
+        if isinstance(threshold_promotion_decision, str) and threshold_promotion_decision:
+            if threshold_promotion_decision == "PROMOTED":
+                promoted_thresholds.append(threshold_name)
+            else:
+                blocked_thresholds.append(threshold_name)
+        else:
+            unknown_promotion_thresholds.append(threshold_name)
+
+    return {
+        "record_count": len(records),
+        "threshold_record_count": threshold_record_count,
+        "missing_threshold_record_count": missing_threshold_record_count,
+        "promoted_count": len(promoted_thresholds),
+        "blocked_count": len(blocked_thresholds),
+        "unknown_promotion_count": len(unknown_promotion_thresholds),
+        "promoted_thresholds": sorted(promoted_thresholds),
+        "blocked_thresholds": sorted(blocked_thresholds),
+        "unknown_promotion_thresholds": sorted(unknown_promotion_thresholds),
+        "accepted_count": acceptance_counts.get("accepted", 0),
+        "rejected_count": acceptance_counts.get("rejected", 0),
+        "accepted_thresholds": sorted(accepted_thresholds),
+        "rejected_thresholds": sorted(rejected_thresholds),
+        "contradiction_thresholds": sorted(set(thresholds_with_contradictions)),
+        "thresholds_with_contradictions": sorted(set(thresholds_with_contradictions)),
+        "blocker_counts": _counter_payload(promotion_blocker_counts),
+        "decision_counts": _counter_payload(decision_counts),
+        "threshold_promotion_decision_counts": _counter_payload(threshold_promotion_decision_counts),
+        "promotion_blocker_counts": _counter_payload(promotion_blocker_counts),
+        "governance_outcome_counts": _counter_payload(governance_outcome_counts),
+        "status_counts": _counter_payload(status_counts),
+        "evidence_type_counts": _counter_payload(evidence_type_counts),
+        "acceptance_counts": _counter_payload(acceptance_counts),
+    }
+
+
+def _phase_map_summary(payload: dict[str, object]) -> dict[str, object]:
+    mechanism_counts_raw = payload.get("mechanism_counts", {})
+    mechanism_counts: Counter[str] = Counter()
+    if isinstance(mechanism_counts_raw, dict):
+        for mechanism, count in mechanism_counts_raw.items():
+            canonical = _canonical_failure_mode_label(mechanism)
+            if canonical is not None and isinstance(count, int):
+                mechanism_counts[canonical] += count
+    points = payload.get("points", [])
+    point_count = int(payload.get("point_count", len(points))) if isinstance(payload.get("point_count", len(points)), int) else len(points)
+    axis_list = [str(axis) for axis in payload.get("axes", [])] if isinstance(payload.get("axes", []), list) else []
+    admissibility_state_counts: Counter[str] = Counter()
+    for point in points if isinstance(points, list) else []:
+        if not isinstance(point, dict):
+            continue
+        state = point.get("admissibility_state")
+        if isinstance(state, str) and state:
+            admissibility_state_counts[state] += 1
+
+    mechanism_ranking = [
+        mechanism
+        for mechanism, _count in sorted(mechanism_counts.items(), key=lambda item: (-item[1], item[0]))
+    ]
+    dominant_mechanism = mechanism_ranking[0] if mechanism_ranking else None
+
+    return {
+        "point_count": point_count,
+        "axis_count": len(axis_list),
+        "axes": axis_list,
+        "mechanism_count": len(mechanism_counts),
+        "dominant_mechanism": dominant_mechanism,
+        "mechanism_ranking": mechanism_ranking,
+        "admissibility_state_counts": _counter_payload(admissibility_state_counts),
+    }
+
+
+def _transition_regions_summary(payload: dict[str, object]) -> dict[str, object]:
+    regions = payload.get("regions", [])
+    axis_counts: Counter[str] = Counter()
+    dominant_mechanism_counts: Counter[str] = Counter()
+    entropies: list[float] = []
+    local_gradients: list[float] = []
+    support_counts: list[int] = []
+    threshold_estimate_count = 0
+
+    if isinstance(regions, list):
+        for region in regions:
+            if not isinstance(region, dict):
+                continue
+            axis = region.get("transition_axis")
+            if isinstance(axis, str) and axis:
+                axis_counts[axis] += 1
+            mechanism = _canonical_failure_mode_label(region.get("dominant_mechanism"))
+            if mechanism is not None:
+                dominant_mechanism_counts[mechanism] += 1
+            entropy = region.get("entropy")
+            if isinstance(entropy, (int, float)):
+                entropies.append(float(entropy))
+            local_gradient = region.get("local_gradient")
+            if isinstance(local_gradient, (int, float)):
+                local_gradients.append(float(local_gradient))
+            support_count = region.get("support_count")
+            if isinstance(support_count, int):
+                support_counts.append(support_count)
+            if isinstance(region.get("estimated_threshold"), (int, float)):
+                threshold_estimate_count += 1
+
+    dominant_mechanism_ordering = [
+        mechanism
+        for mechanism, _count in sorted(
+            dominant_mechanism_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+
+    return {
+        "region_count": len(regions) if isinstance(regions, list) else 0,
+        "axis_counts": _counter_payload(axis_counts),
+        "axes": sorted(axis_counts),
+        "dominant_mechanism_counts": _counter_payload(dominant_mechanism_counts),
+        "dominant_mechanism_ordering": dominant_mechanism_ordering,
+        "max_entropy": max(entropies, default=0.0),
+        "mean_entropy": _mean(entropies) or 0.0,
+        "max_local_gradient": max(local_gradients, default=0.0),
+        "max_support_count": max(support_counts, default=0),
+        "threshold_estimate_count": threshold_estimate_count,
+    }
+
+
+def _threshold_catalog_summary(
+    thresholds: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    status_counts: Counter[str] = Counter()
+    evidence_type_counts: Counter[str] = Counter()
+    governance_outcome_counts: Counter[str] = Counter()
+    promotion_decision_counts: Counter[str] = Counter()
+    decision_counts: Counter[str] = Counter()
+    thresholds_with_estimates: list[str] = []
+    thresholds_without_estimates: list[str] = []
+    promoted_thresholds: list[str] = []
+    blocked_thresholds: list[str] = []
+    unknown_promotion_thresholds: list[str] = []
+    thresholds_with_contradictions: list[str] = []
+    isolated_thresholds: list[str] = []
+    normalized_thresholds: list[str] = []
+    monotonicity_violation_thresholds: list[str] = []
+
+    for threshold_name, record in sorted(thresholds.items()):
+        estimate = record.get("estimate")
+        if isinstance(estimate, (int, float)):
+            thresholds_with_estimates.append(threshold_name)
+        else:
+            thresholds_without_estimates.append(threshold_name)
+
+        status = record.get("status")
+        if isinstance(status, str) and status:
+            status_counts[status] += 1
+
+        evidence_type = record.get("evidence_type")
+        if isinstance(evidence_type, str) and evidence_type:
+            evidence_type_counts[evidence_type] += 1
+
+        governance_outcome = record.get("promotion_governance_outcome")
+        if isinstance(governance_outcome, str) and governance_outcome:
+            governance_outcome_counts[governance_outcome] += 1
+
+        promotion_decision = record.get("threshold_promotion_decision")
+        if isinstance(promotion_decision, str) and promotion_decision:
+            promotion_decision_counts[promotion_decision] += 1
+            if promotion_decision == "PROMOTED":
+                promoted_thresholds.append(threshold_name)
+            else:
+                blocked_thresholds.append(threshold_name)
+        else:
+            unknown_promotion_thresholds.append(threshold_name)
+
+        promotion_state = record.get("promotion_state")
+        if isinstance(promotion_state, dict):
+            decision = promotion_state.get("decision")
+            if isinstance(decision, str) and decision:
+                decision_counts[decision] += 1
+
+        contradictions = record.get("contradictions", [])
+        if isinstance(contradictions, (list, tuple)) and contradictions:
+            thresholds_with_contradictions.append(threshold_name)
+
+        if bool(record.get("is_isolated")):
+            isolated_thresholds.append(threshold_name)
+
+        if record.get("normalized_threshold_value") is not None:
+            normalized_thresholds.append(threshold_name)
+
+        if bool(record.get("monotonicity_violation")):
+            monotonicity_violation_thresholds.append(threshold_name)
+
+    return {
+        "threshold_count": len(thresholds),
+        "estimated_threshold_count": len(thresholds_with_estimates),
+        "missing_estimate_count": len(thresholds_without_estimates),
+        "thresholds_with_estimates": thresholds_with_estimates,
+        "thresholds_without_estimates": thresholds_without_estimates,
+        "promoted_count": len(promoted_thresholds),
+        "blocked_count": len(blocked_thresholds),
+        "unknown_promotion_count": len(unknown_promotion_thresholds),
+        "promoted_thresholds": promoted_thresholds,
+        "blocked_thresholds": blocked_thresholds,
+        "unknown_promotion_thresholds": unknown_promotion_thresholds,
+        "contradiction_threshold_count": len(thresholds_with_contradictions),
+        "contradiction_thresholds": sorted(set(thresholds_with_contradictions)),
+        "thresholds_with_contradictions": sorted(set(thresholds_with_contradictions)),
+        "isolated_threshold_count": len(isolated_thresholds),
+        "isolated_thresholds": isolated_thresholds,
+        "normalized_threshold_count": len(normalized_thresholds),
+        "normalized_thresholds": normalized_thresholds,
+        "monotonicity_violation_count": len(monotonicity_violation_thresholds),
+        "monotonicity_violation_thresholds": monotonicity_violation_thresholds,
+        "status_counts": _counter_payload(status_counts),
+        "evidence_type_counts": _counter_payload(evidence_type_counts),
+        "promotion_governance_outcome_counts": _counter_payload(governance_outcome_counts),
+        "threshold_promotion_decision_counts": _counter_payload(promotion_decision_counts),
+        "decision_counts": _counter_payload(decision_counts),
+    }
+
+
+def _admissibility_overlay_summary(payload: dict[str, object]) -> dict[str, object]:
+    state_region_counts: Counter[str] = Counter()
+    state_support_counts: Counter[str] = Counter()
+    reason_counts: Counter[str] = Counter()
+    axes: set[str] = set()
+    placeholder_unresolved_region_count = 0
+
+    for state_key, field_name in (
+        ("ADMISSIBLE", "admissible_region_candidates"),
+        ("INADMISSIBLE", "inadmissible_region_candidates"),
+        ("UNRESOLVED", "unresolved_regions"),
+    ):
+        regions = payload.get(field_name, [])
+        if not isinstance(regions, list):
+            continue
+        if regions:
+            state_region_counts[state_key] += len(regions)
+        for region in regions:
+            if not isinstance(region, dict):
+                continue
+            support_count = region.get("support_count")
+            if isinstance(support_count, int):
+                state_support_counts[state_key] += support_count
+            axis = region.get("axis")
+            if isinstance(axis, str) and axis:
+                axes.add(axis)
+            reasons = region.get("reasons", [])
+            if isinstance(reasons, (list, tuple)):
+                for reason in reasons:
+                    if isinstance(reason, str) and reason:
+                        reason_counts[reason] += 1
+            if (
+                state_key == "UNRESOLVED"
+                and support_count == 0
+                and isinstance(reasons, (list, tuple))
+                and "no_intermediate_admissibility_region_observed" in reasons
+            ):
+                placeholder_unresolved_region_count += 1
+
+    point_label_state_counts: Counter[str] = Counter()
+    point_labels = payload.get("point_labels", [])
+    if isinstance(point_labels, list):
+        for point_label in point_labels:
+            if not isinstance(point_label, dict):
+                continue
+            state = point_label.get("state")
+            if isinstance(state, str) and state:
+                point_label_state_counts[state] += 1
+            reasons = point_label.get("reasons", [])
+            if isinstance(reasons, (list, tuple)):
+                for reason in reasons:
+                    if isinstance(reason, str) and reason:
+                        reason_counts[reason] += 1
+
+    return {
+        "region_count": sum(state_region_counts.values()),
+        "state_region_counts": _counter_payload(state_region_counts),
+        "state_support_counts": _counter_payload(state_support_counts),
+        "point_label_count": len(point_labels) if isinstance(point_labels, list) else 0,
+        "point_label_state_counts": _counter_payload(point_label_state_counts),
+        "axis_count": len(axes),
+        "axes": sorted(axes),
+        "reason_counts": _counter_payload(reason_counts),
+        "placeholder_unresolved_region_count": placeholder_unresolved_region_count,
+    }
+
+
+def _phase_boundaries_summary(payload: dict[str, object]) -> dict[str, object]:
+    failure_mechanism_counts_raw = payload.get("failure_mechanism_counts", {})
+    failure_mechanism_counts: Counter[str] = Counter()
+    if isinstance(failure_mechanism_counts_raw, dict):
+        for mechanism, count in failure_mechanism_counts_raw.items():
+            canonical = _canonical_failure_mode_label(mechanism)
+            if canonical is not None and isinstance(count, int):
+                failure_mechanism_counts[canonical] += count
+
+    dominant_mechanism_ordering = [
+        mechanism
+        for mechanism, _count in sorted(
+            failure_mechanism_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+
+    return {
+        "slice_count": int(payload.get("slice_count", 0)) if isinstance(payload.get("slice_count", 0), int) else 0,
+        "dominant_mechanism": dominant_mechanism_ordering[0] if dominant_mechanism_ordering else None,
+        "dominant_mechanism_counts": _counter_payload(failure_mechanism_counts),
+        "parameter_sensitivity_axis_count": len(payload.get("parameter_sensitivity", []))
+        if isinstance(payload.get("parameter_sensitivity", []), list)
+        else 0,
+        "dominant_failure_region_count": len(payload.get("dominant_failure_regions", []))
+        if isinstance(payload.get("dominant_failure_regions", []), list)
+        else 0,
+        "switch_count": len(payload.get("dominant_failure_switches", []))
+        if isinstance(payload.get("dominant_failure_switches", []), list)
+        else 0,
+        "monotonic_threshold_region_count": len(payload.get("monotonic_threshold_regions", []))
+        if isinstance(payload.get("monotonic_threshold_regions", []), list)
+        else 0,
+        "governed_transition_boundary_count": len(payload.get("governed_transition_boundaries", []))
+        if isinstance(payload.get("governed_transition_boundaries", []), list)
+        else 0,
+        "rejected_transition_candidate_count": len(payload.get("rejected_transition_candidates", []))
+        if isinstance(payload.get("rejected_transition_candidates", []), list)
+        else 0,
+        "safe_region_exit_count": sum(
+            int(count)
+            for count in payload.get("safe_region_exit_distribution", {}).values()
+            if isinstance(count, int)
+        )
+        if isinstance(payload.get("safe_region_exit_distribution", {}), dict)
+        else 0,
+    }
+
+
+def _contradictions_summary(contradictions: list[dict[str, object]]) -> dict[str, object]:
+    contradiction_type_counts: Counter[str] = Counter()
+    severity_counts: Counter[str] = Counter()
+    affected_thresholds: set[str] = set()
+    affected_tranches: set[str] = set()
+    blocking_count = 0
+    non_blocking_count = 0
+    contradictions_without_threshold_count = 0
+    contradictions_without_type_count = 0
+
+    for contradiction in contradictions:
+        contradiction_type = contradiction.get("contradiction_type")
+        if isinstance(contradiction_type, str) and contradiction_type:
+            contradiction_type_counts[contradiction_type] += 1
+        else:
+            contradictions_without_type_count += 1
+
+        severity = contradiction.get("contradiction_severity")
+        if isinstance(severity, str) and severity:
+            severity_counts[severity] += 1
+
+        threshold = contradiction.get("threshold")
+        if isinstance(threshold, str) and threshold:
+            affected_thresholds.add(threshold)
+        else:
+            contradictions_without_threshold_count += 1
+
+        tranches = contradiction.get("affected_tranches", [])
+        if isinstance(tranches, (list, tuple)):
+            for tranche_name in tranches:
+                if isinstance(tranche_name, str) and tranche_name:
+                    affected_tranches.add(tranche_name)
+
+        if isinstance(contradiction.get("blocking"), bool):
+            if contradiction["blocking"]:
+                blocking_count += 1
+            else:
+                non_blocking_count += 1
+
+    return {
+        "contradiction_count": len(contradictions),
+        "contradiction_type_counts": _counter_payload(contradiction_type_counts),
+        "severity_counts": _counter_payload(severity_counts),
+        "affected_thresholds": sorted(affected_thresholds),
+        "affected_threshold_count": len(affected_thresholds),
+        "affected_tranches": sorted(affected_tranches),
+        "affected_tranche_count": len(affected_tranches),
+        "blocking_count": blocking_count,
+        "non_blocking_count": non_blocking_count,
+        "contradictions_without_threshold_count": contradictions_without_threshold_count,
+        "contradictions_without_type_count": contradictions_without_type_count,
+    }
+
+
+def _tranche_comparison_summary(tranches: dict[str, dict[str, object]]) -> dict[str, object]:
+    dominant_mechanism_counts: Counter[str] = Counter()
+    per_tranche_dominant_mechanisms: dict[str, str] = {}
+    total_slice_count = 0
+    fastest_tranche_name: str | None = None
+    fastest_mean_time: float | None = None
+
+    for tranche_name, summary in sorted(tranches.items()):
+        if not isinstance(summary, dict):
+            continue
+        slice_count = summary.get("slice_count")
+        if isinstance(slice_count, int):
+            total_slice_count += slice_count
+        dominant = _canonical_failure_mode_label(summary.get("dominant_mechanism"))
+        if dominant is not None:
+            dominant_mechanism_counts[dominant] += 1
+            per_tranche_dominant_mechanisms[tranche_name] = dominant
+        mean_time = summary.get("mean_time_to_first_failure")
+        if isinstance(mean_time, (int, float)):
+            candidate = float(mean_time)
+            if fastest_mean_time is None or (candidate, tranche_name) < (fastest_mean_time, fastest_tranche_name or tranche_name):
+                fastest_mean_time = candidate
+                fastest_tranche_name = tranche_name
+
+    dominant_mechanism_ordering = [
+        mechanism
+        for mechanism, _count in sorted(
+            dominant_mechanism_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+
+    return {
+        "tranche_count": len(tranches),
+        "total_slice_count": total_slice_count,
+        "dominant_mechanism_counts": _counter_payload(dominant_mechanism_counts),
+        "dominant_mechanism_ordering": dominant_mechanism_ordering,
+        "per_tranche_dominant_mechanisms": per_tranche_dominant_mechanisms,
+        "fastest_tranche": (
+            {
+                "tranche_name": fastest_tranche_name,
+                "mean_time_to_first_failure": fastest_mean_time,
+            }
+            if fastest_tranche_name is not None and fastest_mean_time is not None
+            else None
+        ),
+    }
+
+
+def _slice_results_summary(
+    results: list[dict[str, object]],
+    thresholds: dict[str, dict[str, object]],
+    adaptive_payload: dict[str, object] | None,
+) -> dict[str, object]:
+    dominant_mechanism_counts: Counter[str] = Counter()
+    safe_region_exit_distribution: Counter[str] = Counter()
+    failure_times: list[float] = []
+    safe_region_exit_times: list[float] = []
+    degraded_mode_dwell_times: list[float] = []
+    replay_hashes: list[str] = []
+    missing_replay_hash_count = 0
+
+    for result in results:
+        dominant_mechanism = _canonical_failure_mode_label(
+            result.get("dominant_failure_mode") or result.get("first_dominant_failure_mechanism")
+        )
+        if dominant_mechanism is not None:
+            dominant_mechanism_counts[dominant_mechanism] += 1
+
+        safe_region_exit_distribution[str(result.get("safe_region_exit_cause") or "no_exit")] += 1
+
+        time_to_first_failure = result.get("time_to_first_failure")
+        if isinstance(time_to_first_failure, (int, float)):
+            failure_times.append(float(time_to_first_failure))
+
+        safe_region_exit_time = result.get("safe_region_exit_time")
+        if isinstance(safe_region_exit_time, (int, float)):
+            safe_region_exit_times.append(float(safe_region_exit_time))
+
+        degraded_mode_dwell_time = result.get("degraded_mode_dwell_time")
+        if isinstance(degraded_mode_dwell_time, (int, float)):
+            degraded_mode_dwell_times.append(float(degraded_mode_dwell_time))
+
+        replay_hash = result.get("replay_hash")
+        if isinstance(replay_hash, str) and replay_hash:
+            replay_hashes.append(replay_hash)
+        else:
+            missing_replay_hash_count += 1
+
+    dominant_mechanism_ordering = [
+        mechanism
+        for mechanism, _count in sorted(
+            dominant_mechanism_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+
+    promoted_threshold_count = sum(
+        1
+        for record in thresholds.values()
+        if isinstance(record, dict) and bool(record.get("promotion_state", {}).get("promoted"))
+    )
+    contradiction_threshold_count = sum(
+        1
+        for record in thresholds.values()
+        if isinstance(record, dict)
+        and isinstance(record.get("contradictions"), list)
+        and bool(record.get("contradictions"))
+    )
+
+    iterations = adaptive_payload.get("iterations", []) if isinstance(adaptive_payload, dict) else []
+
+    return {
+        "slice_count": len(results),
+        "dominant_mechanism": dominant_mechanism_ordering[0] if dominant_mechanism_ordering else None,
+        "dominant_mechanism_counts": _counter_payload(dominant_mechanism_counts),
+        "safe_region_exit_distribution": _counter_payload(safe_region_exit_distribution),
+        "mean_time_to_first_failure": _mean(failure_times),
+        "median_time_to_first_failure": _median(failure_times),
+        "mean_safe_region_exit_time": _mean(safe_region_exit_times),
+        "median_safe_region_exit_time": _median(safe_region_exit_times),
+        "mean_degraded_mode_dwell_time": _mean(degraded_mode_dwell_times),
+        "replay_hash_coverage": {
+            "with_replay_hash_count": len(replay_hashes),
+            "missing_replay_hash_count": missing_replay_hash_count,
+            "unique_replay_hash_count": len(set(replay_hashes)),
+        },
+        "adaptive_enabled": bool(adaptive_payload.get("enabled")) if isinstance(adaptive_payload, dict) else False,
+        "adaptive_iteration_count": len(iterations) if isinstance(iterations, list) else 0,
+        "threshold_count": len(thresholds),
+        "promoted_threshold_count": promoted_threshold_count,
+        "contradiction_threshold_count": contradiction_threshold_count,
+    }
+
+
+def _cross_tranche_summary_summary(
+    fastest_tranche_by_mechanism: dict[str, dict[str, object]],
+    mixed_stress_summary: dict[str, object],
+) -> dict[str, object]:
+    fastest_tranche_counts: Counter[str] = Counter()
+    mechanisms_with_fastest_tranche: dict[str, list[str]] = defaultdict(list)
+
+    for mechanism, payload in sorted(fastest_tranche_by_mechanism.items()):
+        if not isinstance(payload, dict):
+            continue
+        tranche_name = payload.get("tranche_name")
+        canonical_mechanism = _canonical_failure_mode_label(mechanism)
+        if not isinstance(tranche_name, str) or not tranche_name or canonical_mechanism is None:
+            continue
+        fastest_tranche_counts[tranche_name] += 1
+        mechanisms_with_fastest_tranche[tranche_name].append(canonical_mechanism)
+
+    fastest_tranche_ordering = [
+        tranche_name
+        for tranche_name, _count in sorted(
+            fastest_tranche_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+
+    emergent_mechanisms = [
+        canonical
+        for mechanism in mixed_stress_summary.get("emergent_mechanisms", [])
+        if (canonical := _canonical_failure_mode_label(mechanism)) is not None
+    ] if isinstance(mixed_stress_summary.get("emergent_mechanisms", []), list) else []
+    suppressed_mechanisms = [
+        canonical
+        for mechanism in mixed_stress_summary.get("suppressed_mechanisms", [])
+        if (canonical := _canonical_failure_mode_label(mechanism)) is not None
+    ] if isinstance(mixed_stress_summary.get("suppressed_mechanisms", []), list) else []
+
+    return {
+        "fastest_mechanism_count": len(fastest_tranche_by_mechanism),
+        "fastest_tranche_counts": _counter_payload(fastest_tranche_counts),
+        "fastest_tranche_ordering": fastest_tranche_ordering,
+        "mechanisms_with_fastest_tranche": {
+            tranche_name: sorted(mechanisms)
+            for tranche_name, mechanisms in sorted(mechanisms_with_fastest_tranche.items())
+        },
+        "coupled_primary_mechanism": _canonical_failure_mode_label(
+            mixed_stress_summary.get("coupled_primary_mechanism")
+        ),
+        "ordering_shift_detected": bool(mixed_stress_summary.get("ordering_shift_detected", False)),
+        "ordering_shift_magnitude": int(mixed_stress_summary.get("ordering_shift_magnitude", 0)),
+        "emergent_mechanism_count": len(emergent_mechanisms),
+        "emergent_mechanisms": emergent_mechanisms,
+        "suppressed_mechanism_count": len(suppressed_mechanisms),
+        "suppressed_mechanisms": suppressed_mechanisms,
+    }
+
+
+def _convergence_report_summary(payload: dict[str, object]) -> dict[str, object]:
+    iterations = payload.get("iterations", [])
+    final_iteration = iterations[-1] if isinstance(iterations, list) and iterations else None
+    converged_iteration = next(
+        (
+            int(iteration["iteration"])
+            for iteration in iterations
+            if isinstance(iteration, dict) and bool(iteration.get("converged"))
+        ),
+        None,
+    ) if isinstance(iterations, list) else None
+    return {
+        "iteration_count": len(iterations) if isinstance(iterations, list) else 0,
+        "converged": bool(payload.get("converged")),
+        "stopping_reason": payload.get("stopping_reason"),
+        "converged_iteration": converged_iteration,
+        "final_iteration": (
+            {
+                "iteration": final_iteration.get("iteration"),
+                "cumulative_slice_count": final_iteration.get("cumulative_slice_count"),
+                "transition_region_count": final_iteration.get("transition_region_count"),
+                "boundary_shift": final_iteration.get("boundary_shift"),
+                "classification_stability": final_iteration.get("classification_stability"),
+                "converged": final_iteration.get("converged"),
+            }
+            if isinstance(final_iteration, dict)
+            else None
+        ),
+    }
+
+
+def _consistency_findings_summary(findings: list[dict[str, object]]) -> dict[str, object]:
+    kind_counts: Counter[str] = Counter()
+    thresholds: set[str] = set()
+    findings_without_threshold_count = 0
+    findings_without_kind_count = 0
+
+    for finding in findings:
+        kind = finding.get("kind")
+        if isinstance(kind, str) and kind:
+            kind_counts[kind] += 1
+        else:
+            findings_without_kind_count += 1
+        threshold = finding.get("threshold")
+        if isinstance(threshold, str) and threshold:
+            thresholds.add(threshold)
+        else:
+            findings_without_threshold_count += 1
+
+    return {
+        "finding_count": len(findings),
+        "kind_counts": _counter_payload(kind_counts),
+        "finding_kind_counts": _counter_payload(kind_counts),
+        "affected_thresholds": sorted(thresholds),
+        "affected_threshold_count": len(thresholds),
+        "thresholds_with_findings": sorted(thresholds),
+        "findings_without_threshold_count": findings_without_threshold_count,
+        "findings_without_kind_count": findings_without_kind_count,
+    }
+
+
+def _global_phase_map_summary(tranches: dict[str, dict[str, object]]) -> dict[str, object]:
+    dominant_mechanism_counts: Counter[str] = Counter()
+    axes: set[str] = set()
+    tranche_point_counts: dict[str, int] = {}
+    per_tranche_dominant_mechanisms: dict[str, str] = {}
+    total_point_count = 0
+
+    for tranche_name, payload in sorted(tranches.items()):
+        if not isinstance(payload, dict):
+            continue
+        point_count = payload.get("point_count", 0)
+        if isinstance(point_count, int):
+            tranche_point_counts[tranche_name] = point_count
+            total_point_count += point_count
+        tranche_axes = payload.get("axes", [])
+        if isinstance(tranche_axes, list):
+            axes.update(str(axis) for axis in tranche_axes if isinstance(axis, str) and axis)
+        summary = payload.get("summary")
+        if isinstance(summary, dict):
+            dominant_mechanism = summary.get("dominant_mechanism")
+            if isinstance(dominant_mechanism, str) and dominant_mechanism:
+                dominant_mechanism_counts[dominant_mechanism] += 1
+                per_tranche_dominant_mechanisms[tranche_name] = dominant_mechanism
+
+    dominant_mechanism_ordering = [
+        mechanism
+        for mechanism, _count in sorted(
+            dominant_mechanism_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )
+    ]
+
+    return {
+        "tranche_count": len(tranches),
+        "total_point_count": total_point_count,
+        "axes": sorted(axes),
+        "axis_count": len(axes),
+        "tranche_point_counts": tranche_point_counts,
+        "dominant_mechanism_counts": _counter_payload(dominant_mechanism_counts),
+        "dominant_mechanism_ordering": dominant_mechanism_ordering,
+        "per_tranche_dominant_mechanisms": per_tranche_dominant_mechanisms,
+    }
+
+
 def _mechanism_rankings(results: list[TrancheSliceResult]) -> list[str]:
     counts = Counter(_slice_mode(result) for result in results)
     return [
@@ -1178,7 +2109,17 @@ def write_cross_tranche_outputs(
             writer.writerow(row)
 
     with comparison_path.open("w", encoding="utf-8") as handle:
-        json.dump({"tranches": summaries}, handle, indent=2)
+        json.dump(
+            {
+                "artifact_type": "tranche_comparison",
+                "analysis_contract_version": 2,
+                "scope": "cross_tranche",
+                "tranches": summaries,
+                "summary": _tranche_comparison_summary(summaries),
+            },
+            handle,
+            indent=2,
+        )
 
     fastest_by_mechanism: dict[str, dict[str, object]] = {}
     for mechanism in FAILURE_MECHANISMS:
@@ -1198,35 +2139,20 @@ def write_cross_tranche_outputs(
                 "mean_time_to_first_failure": mean_time,
             }
 
-    mixed_stress_summary: dict[str, object] = {}
-    if "coupled" in summaries:
-        isolated_primary_counts = Counter(
-            summary["dominant_mechanism"]
-            for tranche_name, summary in summaries.items()
-            if tranche_name != "coupled"
-        )
-        isolated_ordering = [
-            mechanism
-            for mechanism, _count in sorted(isolated_primary_counts.items(), key=lambda item: (-item[1], item[0]))
-        ]
-        coupled_ordering = list(summaries["coupled"]["mechanism_ranking"])
-        mixed_stress_summary = {
-            "coupled_primary_mechanism": summaries["coupled"]["dominant_mechanism"],
-            "coupled_mechanism_ranking": coupled_ordering,
-            "isolated_primary_mechanisms": {
-                tranche_name: summary["dominant_mechanism"]
-                for tranche_name, summary in summaries.items()
-                if tranche_name != "coupled"
-            },
-            "isolated_primary_ordering": isolated_ordering,
-            "ordering_shift_detected": coupled_ordering[:3] != isolated_ordering[:3],
-        }
+    mixed_stress_summary = _build_mixed_stress_summary(summaries)
 
     with summary_path.open("w", encoding="utf-8") as handle:
         json.dump(
             {
+                "artifact_type": "cross_tranche_summary",
+                "analysis_contract_version": 2,
+                "scope": "cross_tranche",
                 "fastest_tranche_by_mechanism": fastest_by_mechanism,
                 "mixed_stress_summary": mixed_stress_summary,
+                "summary": _cross_tranche_summary_summary(
+                    fastest_by_mechanism,
+                    mixed_stress_summary,
+                ),
             },
             handle,
             indent=2,
@@ -1241,11 +2167,16 @@ def write_global_phase_map_json(
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / "global_phase_map.json"
+    tranche_payloads = {
+        tranche_name: build_phase_space_outputs(tranche_name, results)["phase_map"]
+        for tranche_name, results in sorted(tranche_results.items())
+    }
     payload = {
-        "tranches": {
-            tranche_name: build_phase_space_outputs(tranche_name, results)["phase_map"]
-            for tranche_name, results in sorted(tranche_results.items())
-        }
+        "artifact_type": "global_phase_map",
+        "analysis_contract_version": 2,
+        "scope": "cross_tranche",
+        "tranches": tranche_payloads,
+        "summary": _global_phase_map_summary(tranche_payloads),
     }
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
@@ -1264,6 +2195,11 @@ def write_cross_tranche_thresholds_json(
             for tranche_name, results in sorted(tranche_results.items())
         }
     )
+    payload["artifact_type"] = "cross_tranche_thresholds"
+    payload["summary"] = _threshold_catalog_summary(payload["global_thresholds"])
+    payload["promotion_summary"] = _promotion_record_summary(payload["promotion_decisions"])
+    payload["consistency_summary"] = _consistency_findings_summary(payload["consistency_findings"])
+    payload["contradiction_summary"] = _contradictions_summary(payload["contradictions"])
     with path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
     return path
@@ -1284,11 +2220,15 @@ def write_contradictions_json(
     with path.open("w", encoding="utf-8") as handle:
         json.dump(
             {
+                "artifact_type": "contradictions",
                 "analysis_contract_version": payload["analysis_contract_version"],
                 "scope": payload["scope"],
                 "contradictions": payload.get("contradictions", []),
+                "summary": _contradictions_summary(payload.get("contradictions", [])),
                 "global_thresholds": payload.get("global_thresholds", {}),
+                "threshold_summary": _threshold_catalog_summary(payload.get("global_thresholds", {})),
                 "promotion_decisions": payload.get("promotion_decisions", []),
+                "promotion_summary": _promotion_record_summary(payload.get("promotion_decisions", [])),
             },
             handle,
             indent=2,
@@ -1311,11 +2251,14 @@ def write_cross_tranche_threshold_ledger_json(
     with path.open("w", encoding="utf-8") as handle:
         json.dump(
             {
+                "artifact_type": "cross_tranche_threshold_ledger",
                 "analysis_contract_version": payload["analysis_contract_version"],
                 "scope": payload["scope"],
                 "epistemic_note": payload["epistemic_note"],
                 "entries": payload["threshold_ledger"],
                 "consistency_findings": payload["consistency_findings"],
+                "summary": _promotion_record_summary(payload["threshold_ledger"]),
+                "consistency_summary": _consistency_findings_summary(payload["consistency_findings"]),
             },
             handle,
             indent=2,
@@ -1338,10 +2281,13 @@ def write_cross_tranche_promotion_decisions_json(
     with path.open("w", encoding="utf-8") as handle:
         json.dump(
             {
+                "artifact_type": "cross_tranche_promotion_decisions",
                 "analysis_contract_version": payload["analysis_contract_version"],
                 "scope": payload["scope"],
                 "decisions": payload["promotion_decisions"],
                 "consistency_findings": payload["consistency_findings"],
+                "summary": _promotion_record_summary(payload["promotion_decisions"]),
+                "consistency_summary": _consistency_findings_summary(payload["consistency_findings"]),
             },
             handle,
             indent=2,

@@ -23,5 +23,5 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+pythonpath = [".", "src"]
+testpaths = ["tests", "skills/auto_vtol_network/tests"]
