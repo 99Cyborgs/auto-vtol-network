@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AVN Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <h1>AVN Operator Console</h1>
+        <p class="lede">Deterministic corridor-and-node VTOL replay surface.</p>
+        <label class="control">
+          <span>Scenario</span>
+          <select id="scenario-select"></select>
+        </label>
+        <div class="control-row">
+          <button id="play-toggle">Play</button>
+          <button id="step-forward">Step</button>
+        </div>
+        <label class="control">
+          <span>Time</span>
+          <input id="timeline" type="range" min="0" max="0" value="0" />
+        </label>
+        <div id="summary" class="panel"></div>
+        <div id="alerts" class="panel list-panel"></div>
+      </aside>
+      <main class="main">
+        <section class="hero panel">
+          <div>
+            <h2 id="scenario-name"></h2>
+            <p id="scenario-description"></p>
+          </div>
+          <div id="metric-strip" class="metric-strip"></div>
+        </section>
+        <section class="grid">
+          <div class="panel canvas-panel">
+            <svg id="network-canvas" viewBox="0 0 1000 720"></svg>
+          </div>
+          <div class="panel">
+            <h3>Event Log</h3>
+            <div id="events" class="list-panel"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

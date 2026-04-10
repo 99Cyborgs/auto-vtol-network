@@ -1,0 +1,41 @@
+{
+  "scenario_id": "node_saturation",
+  "name": "Node Saturation",
+  "description": "Demand concentrates on East Hub and produces visible queue spillback and corridor loading.",
+  "seed": 13,
+  "duration_minutes": 90,
+  "time_step_minutes": 5,
+  "recommended": false,
+  "output_root": "outputs/avn",
+  "alert_thresholds": {
+    "queue_pressure": 2,
+    "corridor_load_ratio": 0.7,
+    "low_reserve": 16.0
+  },
+  "nodes": [
+    {"node_id": "WEST_HUB", "label": "West Hub", "node_type": "hub", "x": 120, "y": 320, "service_rate_per_hour": 18, "queue_alert_threshold": 2, "emergency_capacity": 1},
+    {"node_id": "MID_NORTH", "label": "Mid North", "node_type": "vertiport", "x": 370, "y": 170, "service_rate_per_hour": 12, "queue_alert_threshold": 2, "emergency_capacity": 0},
+    {"node_id": "MID_SOUTH", "label": "Mid South", "node_type": "vertiport", "x": 400, "y": 500, "service_rate_per_hour": 12, "queue_alert_threshold": 2, "emergency_capacity": 0},
+    {"node_id": "EAST_HUB", "label": "East Hub", "node_type": "hub", "x": 720, "y": 320, "service_rate_per_hour": 10, "queue_alert_threshold": 2, "emergency_capacity": 2},
+    {"node_id": "PAD_ALPHA", "label": "Pad Alpha", "node_type": "emergency_pad", "x": 880, "y": 150, "service_rate_per_hour": 14, "queue_alert_threshold": 2, "emergency_capacity": 3}
+  ],
+  "corridors": [
+    {"corridor_id": "W_N", "origin": "WEST_HUB", "destination": "MID_NORTH", "length_km": 24, "base_speed_kmh": 140, "base_capacity_per_hour": 8, "weather_exposure": 0.5},
+    {"corridor_id": "N_E", "origin": "MID_NORTH", "destination": "EAST_HUB", "length_km": 22, "base_speed_kmh": 140, "base_capacity_per_hour": 8, "weather_exposure": 0.5},
+    {"corridor_id": "W_S", "origin": "WEST_HUB", "destination": "MID_SOUTH", "length_km": 28, "base_speed_kmh": 132, "base_capacity_per_hour": 8, "weather_exposure": 0.5},
+    {"corridor_id": "S_E", "origin": "MID_SOUTH", "destination": "EAST_HUB", "length_km": 20, "base_speed_kmh": 132, "base_capacity_per_hour": 8, "weather_exposure": 0.5},
+    {"corridor_id": "E_PAD", "origin": "EAST_HUB", "destination": "PAD_ALPHA", "length_km": 16, "base_speed_kmh": 115, "base_capacity_per_hour": 6, "weather_exposure": 0.3}
+  ],
+  "vehicles": [
+    {"vehicle_id": "FLOW_01", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 0, "mission_class": "passenger", "reserve_energy": 58},
+    {"vehicle_id": "FLOW_02", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 0, "mission_class": "passenger", "reserve_energy": 58},
+    {"vehicle_id": "FLOW_03", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 5, "mission_class": "cargo", "reserve_energy": 58},
+    {"vehicle_id": "FLOW_04", "origin": "MID_NORTH", "destination": "EAST_HUB", "release_minute": 5, "mission_class": "passenger", "reserve_energy": 48},
+    {"vehicle_id": "FLOW_05", "origin": "MID_SOUTH", "destination": "EAST_HUB", "release_minute": 5, "mission_class": "passenger", "reserve_energy": 48},
+    {"vehicle_id": "FLOW_06", "origin": "MID_SOUTH", "destination": "EAST_HUB", "release_minute": 10, "mission_class": "passenger", "reserve_energy": 48},
+    {"vehicle_id": "FLOW_07", "origin": "MID_NORTH", "destination": "EAST_HUB", "release_minute": 10, "mission_class": "passenger", "reserve_energy": 48}
+  ],
+  "disturbances": [
+    {"disturbance_id": "east_pad_slowdown", "kind": "node", "target_id": "EAST_HUB", "start_minute": 15, "end_minute": 65, "weather_severity": 0.1, "status": "degraded", "capacity_multiplier": 1.0, "service_multiplier": 0.45, "note": "stand saturation"}
+  ]
+}

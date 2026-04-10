@@ -1,0 +1,4 @@
+node_id,node_type,turnaround_minutes,service_rate_per_hour,queue_capacity,contingency_slots,trust_state
+HUB_A,hub,8,60,6,1,trusted
+HUB_B,hub,6,60,4,1,trusted
+PAD_C,contingency_pad,10,40,3,2,trusted

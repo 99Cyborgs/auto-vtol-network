@@ -1,8 +1,8 @@
 PYTHON ?= python
 PIP ?= $(PYTHON) -m pip
-CONFIG ?= configs/nominal.toml
+SCENARIO ?= weather_closure
 
-.PHONY: install test release-check run run-nominal run-weather
+.PHONY: install test run dashboard demo release-check
 
 install:
 	$(PIP) install -r requirements.txt
@@ -11,14 +11,14 @@ install:
 test:
 	$(PYTHON) -m pytest
 
+run:
+	$(PYTHON) -m avn run $(SCENARIO)
+
+dashboard:
+	$(PYTHON) -m avn dashboard
+
+demo:
+	$(PYTHON) -m avn demo
+
 release-check:
 	$(PYTHON) scripts/release_check.py
-
-run:
-	$(PYTHON) -m avn $(CONFIG)
-
-run-nominal:
-	$(PYTHON) scripts/run_nominal.py
-
-run-weather:
-	$(PYTHON) scripts/run_weather_case.py

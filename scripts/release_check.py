@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -12,15 +13,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIST_DIR = REPO_ROOT / "dist"
 BUILD_DIR = REPO_ROOT / "build"
-WARNING_MARKER = "Package would be ignored"
-FORBIDDEN_WHEEL_PREFIX = "skills/auto_vtol_network/tests/"
 
 
-def _run(command: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+def _run(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         command,
         cwd=str(cwd or REPO_ROOT),
-        env=env,
         text=True,
         capture_output=True,
         check=False,
@@ -39,10 +37,8 @@ def _clean_artifact_dirs() -> None:
 
 
 def _build_wheel() -> Path:
-    result = _run([sys.executable, "-m", "build", "--wheel"])
-    combined_output = f"{result.stdout}\n{result.stderr}"
-    if WARNING_MARKER in combined_output:
-        raise RuntimeError(f"Setuptools emitted package-ambiguity warnings.\n{combined_output}")
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
+    _run([sys.executable, "-m", "pip", "wheel", ".", "--no-deps", "--wheel-dir", str(DIST_DIR)])
     wheels = sorted(DIST_DIR.glob("*.whl"))
     if len(wheels) != 1:
         raise RuntimeError(f"Expected one wheel in {DIST_DIR}, found {len(wheels)}")
@@ -52,9 +48,16 @@ def _build_wheel() -> Path:
 def _inspect_wheel(wheel_path: Path) -> None:
     with zipfile.ZipFile(wheel_path) as archive:
         names = archive.namelist()
-    forbidden = sorted(name for name in names if name.startswith(FORBIDDEN_WHEEL_PREFIX))
+    required_entries = {
+        "avn/__main__.py",
+        "avn/governance/artifacts.py",
+    }
+    missing = sorted(entry for entry in required_entries if not any(name.endswith(entry) for name in names))
+    if missing:
+        raise RuntimeError(f"Wheel is missing expected entries: {missing}")
+    forbidden = sorted(name for name in names if "skills/auto_vtol_network" in name)
     if forbidden:
-        raise RuntimeError(f"Wheel unexpectedly includes skill-pack tests: {forbidden}")
+        raise RuntimeError(f"Wheel unexpectedly includes deprecated skill-pack content: {forbidden}")
 
 
 def _venv_python(venv_dir: Path) -> Path:
@@ -69,19 +72,15 @@ def _smoke_installed_wheel(wheel_path: Path) -> None:
         _run([sys.executable, "-m", "venv", str(venv_dir)])
         python_bin = _venv_python(venv_dir)
         _run([str(python_bin), "-m", "pip", "install", str(wheel_path)])
-        _run([str(python_bin), "-m", "avn_v2", "--help"])
-        _run([str(python_bin), "-m", "skills.auto_vtol_network", "--help"])
-        _run(
-            [
-                str(python_bin),
-                "-c",
-                (
-                    "from importlib.resources import files; "
-                    "payload = files('skills.auto_vtol_network.templates').joinpath('sample_request.json').read_text(encoding='utf-8'); "
-                    "assert 'avn-governed-skill-pack-sample' in payload"
-                ),
-            ]
-        )
+        _run([str(python_bin), "-m", "avn", "--help"])
+        _run([str(python_bin), "-m", "avn", "run", "baseline_flow", "--output-root", str(Path(temp_dir) / "outputs")])
+        run_dirs = sorted((Path(temp_dir) / "outputs").glob("baseline_flow_*"))
+        if len(run_dirs) != 1:
+            raise RuntimeError(f"Expected one run directory, found {len(run_dirs)}")
+        report = _run([str(python_bin), "-m", "avn", "validate-run", str(run_dirs[0])])
+        payload = json.loads(report.stdout)
+        if payload["status"] != "passed":
+            raise RuntimeError(f"Installed wheel validation failed: {payload}")
 
 
 def main() -> int:

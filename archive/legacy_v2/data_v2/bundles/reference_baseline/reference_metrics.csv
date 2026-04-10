@@ -1,0 +1,6 @@
+metric_key,reference_value,tolerance,unit,weight,objective_group
+completed_requests,3,2,count,1.2,metric
+avg_delay_minutes,3,3,minutes,1.0,metric
+diversion_count,1,1,count,0.9,metric
+mean_completion_minute,24,10,minutes,0.8,metric
+peak_queue_length,2,2,count,0.7,metric

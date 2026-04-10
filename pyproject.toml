@@ -5,41 +5,29 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "auto-vtol-network"
 version = "0.1.0"
-description = "Phase 2C autonomous VTOL network tranche exploration engine for governed failure discovery"
+description = "Deterministic corridor-and-node autonomous VTOL network simulator with dashboard replay."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "matplotlib>=3.8,<4.0",
   "networkx>=3.2,<4.0",
 ]
+
+[project.scripts]
+avn = "avn.__main__:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0,<9.0"]
 
 [tool.setuptools]
-package-dir = {"" = "src", "skills" = "skills"}
-packages = [
-  "avn",
-  "avn.core",
-  "avn.disturbances",
-  "avn.metrics",
-  "avn.network",
-  "avn.nodes",
-  "avn.phase_space",
-  "avn.physics",
-  "avn.simulation",
-  "avn.vehicle",
-  "avn.viz",
-  "avn_v2",
-  "skills",
-  "skills.auto_vtol_network",
-  "skills.auto_vtol_network.engines",
-  "skills.auto_vtol_network.prompts",
-  "skills.auto_vtol_network.templates",
-]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.setuptools.package-data]
-"skills.auto_vtol_network" = ["README.md", "prompts/*.md", "templates/*.json"]
+"avn.scenarios" = ["*.json"]
+"avn.ui.dashboard" = ["*.html", "*.css", "*.js"]
 
 [tool.pytest.ini_options]
 pythonpath = [".", "src"]

@@ -1,0 +1,4 @@
+target_id,scope,entity_id,metric_key,minute,minute_start,minute_end,aggregation,reference_value,tolerance,weight,objective_group
+queue-node-window,node,HUB_A,queue_length,,4,8,max,2,2,0.8,series
+queue-node-credit,node,HUB_A,dispatch_credit,,4,8,min,0,1,0.6,series
+queue-corridor-window,corridor,B_C,reservation_count,,8,12,max,1,1,0.8,series

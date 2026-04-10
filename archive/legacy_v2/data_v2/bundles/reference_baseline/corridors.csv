@@ -1,0 +1,4 @@
+corridor_id,origin,destination,length_km,travel_minutes,capacity_per_hour,energy_cost,reservation_window_minutes
+A_B,HUB_A,HUB_B,18,9,8,12,15
+B_C,HUB_B,PAD_C,12,7,8,9,15
+A_C,HUB_A,PAD_C,20,10,4,14,15
