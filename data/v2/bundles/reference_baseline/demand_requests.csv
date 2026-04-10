@@ -1,5 +1,0 @@
-request_id,release_minute,origin,destination,priority,required_vehicle_class,max_delay_minutes
-REQ_001,0,HUB_A,PAD_C,cargo,standard,18
-REQ_002,2,HUB_A,PAD_C,public_service,standard,16
-REQ_003,5,HUB_B,PAD_C,routine,standard,14
-REQ_004,8,HUB_A,PAD_C,cargo,standard,12

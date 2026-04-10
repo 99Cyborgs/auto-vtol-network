@@ -1,4 +1,0 @@
-event_id,start_minute,end_minute,target_type,target_id,effect_type,value,note
-EVT_001,4,16,corridor,A_C,close,1,direct corridor unavailable forces reroute
-EVT_002,4,16,global,all,operator_delay_minutes,2,communications degradation increases dispatch latency
-EVT_003,6,18,corridor,B_C,reservation_capacity_multiplier,0.5,weather pressure reduces effective capacity

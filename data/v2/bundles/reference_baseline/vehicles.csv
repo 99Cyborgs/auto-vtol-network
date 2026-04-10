@@ -1,4 +1,0 @@
-vehicle_id,home_node,vehicle_class,energy_capacity,reserve_energy,trust_state,operator_required
-V_A1,HUB_A,standard,100,20,trusted,false
-V_A2,HUB_A,standard,100,20,trusted,true
-V_B1,HUB_B,standard,100,18,trusted,false

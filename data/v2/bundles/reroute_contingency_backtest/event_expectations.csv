@@ -1,4 +1,0 @@
-expectation_id,event_type,expected_count,count_tolerance,first_minute,timing_tolerance,weight,objective_group
-exp-request-dispatched,request_dispatched,4,1,0,10,1.0,event
-exp-request-diverted,request_diverted,1,1,0,40,1.1,event
-exp-reroute-attempt,reroute_attempt,0,1,0,20,0.8,event

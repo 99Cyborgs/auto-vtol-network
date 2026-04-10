@@ -1,4 +1,0 @@
-target_id,scope,entity_id,metric_key,minute,minute_start,minute_end,aggregation,reference_value,tolerance,weight,objective_group
-series-network-pending-window,network,all,pending_requests,,4,6,max,2,2,0.6,series
-series-node-queue-hub-a,node,HUB_A,queue_length,5,,,point,2,2,0.6,series
-series-corridor-reservations,corridor,B_C,reservation_count,,8,10,max,1,1,0.5,series
