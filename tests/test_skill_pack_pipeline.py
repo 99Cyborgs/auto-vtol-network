@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import files
 from pathlib import Path
 
 from skills.auto_vtol_network.contracts import SkillPackRequest
 from skills.auto_vtol_network.harness import run_skill_pack
 
 
-TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "sample_request.json"
-
-
 def _load_request() -> SkillPackRequest:
-    payload = json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+    payload = json.loads(
+        files("skills.auto_vtol_network.templates").joinpath("sample_request.json").read_text(encoding="utf-8")
+    )
     return SkillPackRequest.from_dict(payload)
 
 

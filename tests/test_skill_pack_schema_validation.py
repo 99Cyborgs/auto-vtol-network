@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from importlib.resources import files
 
 import pytest
 
@@ -9,11 +9,10 @@ from skills.auto_vtol_network.contracts import SkillPackRequest
 from skills.auto_vtol_network.validators import SkillPackValidationError, validate_request
 
 
-TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "sample_request.json"
-
-
 def _load_payload() -> dict:
-    return json.loads(TEMPLATE_PATH.read_text(encoding="utf-8"))
+    return json.loads(
+        files("skills.auto_vtol_network.templates").joinpath("sample_request.json").read_text(encoding="utf-8")
+    )
 
 
 def test_sample_request_validates() -> None:

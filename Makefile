@@ -2,7 +2,7 @@ PYTHON ?= python
 PIP ?= $(PYTHON) -m pip
 CONFIG ?= configs/nominal.toml
 
-.PHONY: install test run run-nominal run-weather
+.PHONY: install test release-check run run-nominal run-weather
 
 install:
 	$(PIP) install -r requirements.txt
@@ -10,6 +10,9 @@ install:
 
 test:
 	$(PYTHON) -m pytest
+
+release-check:
+	$(PYTHON) scripts/release_check.py
 
 run:
 	$(PYTHON) -m avn $(CONFIG)
@@ -19,4 +22,3 @@ run-nominal:
 
 run-weather:
 	$(PYTHON) scripts/run_weather_case.py
-

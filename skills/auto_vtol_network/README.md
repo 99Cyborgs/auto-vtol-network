@@ -16,6 +16,11 @@ Run a subset of engines:
 python -m skills.auto_vtol_network --input skills/auto_vtol_network/templates/sample_request.json --output-dir outputs/skill_pack_physics --engine physics_threshold_tracking --engine scenario_stress_planning
 ```
 
+## Packaging / Release Check
+
+- Supported installed entrypoints are `python -m avn_v2` and `python -m skills.auto_vtol_network`.
+- Run `make release-check` before release work. It builds the wheel, rejects setuptools package-ambiguity warnings, verifies that skill-pack tests are not bundled, and smoke-tests installed entrypoints plus packaged template access.
+
 ## Scope
 
 - Corridor and node topology only.

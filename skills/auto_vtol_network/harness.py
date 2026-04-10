@@ -6,6 +6,7 @@ from pathlib import Path
 from .contracts import ArtifactManifestArtifact, GovernedMetadata, RunReceipt, SkillPackRequest
 from .enums import ArtifactType, EngineType
 from .registry import ENGINE_REGISTRY, resolve_engine_sequence
+from .v2_adapter import build_request_from_v2_bundle
 from .validators import validate_artifact, validate_request
 from .writers import build_manifest_entry, write_artifact
 
@@ -14,6 +15,10 @@ def load_request(path: Path) -> SkillPackRequest:
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
     return SkillPackRequest.from_dict(payload)
+
+
+def load_v2_request(path: Path) -> SkillPackRequest:
+    return build_request_from_v2_bundle(path)
 
 
 def _build_manifest_artifact(
