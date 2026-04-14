@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 
 from avn.governance.sweep import run_adaptive_sweep
-from avn.governance.validation import validate_run_directory
+from avn.governance.validation import validate_batch_directory, validate_run_directory
+from avn.sim.batch import run_scenario_batch
 from avn.sim.runner import run_scenario
 
 
@@ -68,3 +69,40 @@ def test_adaptive_sweep_runs_on_canonical_manifest(tmp_path: Path) -> None:
     assert paths["adaptive_sweep"].exists()
     assert paths["validation_report"].exists()
     assert paths["artifact_manifest"].exists()
+    validation_report = json.loads(paths["validation_report"].read_text(encoding="utf-8"))
+    assert validation_report["status"] == "passed"
+
+
+def test_batch_run_outputs_validate_recursively(tmp_path: Path) -> None:
+    result = run_scenario_batch(
+        ["baseline_flow", "weather_closure"],
+        repeat=1,
+        output_root=tmp_path,
+        batch_id="validation-batch",
+    )
+
+    report = validate_batch_directory(result.output_dir)
+
+    assert report.status == "passed"
+    assert report.summary["run_count"] == 2
+
+
+def test_validate_run_directory_returns_failed_report_for_missing_manifest(tmp_path: Path) -> None:
+    report = validate_run_directory(tmp_path / "missing-run")
+
+    assert report.status == "failed"
+    assert report.checks[0].check_id == "manifest.exists"
+
+
+def test_validate_batch_directory_returns_failed_report_for_missing_summary(tmp_path: Path) -> None:
+    batch_dir = tmp_path / "broken-batch"
+    batch_dir.mkdir()
+    (batch_dir / "batch_manifest.json").write_text(
+        json.dumps({"batch_id": "broken", "artifact_family": "avn_batch_run", "runs": []}),
+        encoding="utf-8",
+    )
+
+    report = validate_batch_directory(batch_dir)
+
+    assert report.status == "failed"
+    assert report.checks[0].check_id == "batch.summary.exists"

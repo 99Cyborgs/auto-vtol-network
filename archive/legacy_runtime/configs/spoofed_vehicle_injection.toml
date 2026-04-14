@@ -1,9 +1,12 @@
-scenario_name = "comms_plus_hub_degraded"
-description = "Coupled comms freshness degradation and hub service loss to separate stale information from raw node pressure."
+# Historical Phase 2B fixture retained for reference only.
+# Use `python -m avn adaptive-sweep <manifest.json>` for canonical governed sweeps.
+
+scenario_name = "spoofed_vehicle_injection"
+description = "Adversary-injected unknown participant to test unsafe admission pressure and quarantine follow-up."
 time_step_minutes = 5
-duration_minutes = 200
+duration_minutes = 180
 output_root = "../outputs"
-seed = 1208
+seed = 1205
 
 [data_sources]
 nodes = "../data/phase2b/nodes.csv"
@@ -36,36 +39,46 @@ supplier_id = "rescue_ops"
 supplier_type = "identity"
 
 [modifiers]
-demand_multiplier = 1.60
+demand_multiplier = 1.10
 
 [disturbances.base]
-weather_severity = 0.16
-comms_reliability = 0.72
-comms_latency_minutes = 6.0
-message_drop_probability = 0.18
-stale_after_minutes = 8.0
-reroute_delay_minutes = 12.0
-low_bandwidth_threshold_minutes = 14.0
+weather_severity = 0.10
+comms_reliability = 0.94
+comms_latency_minutes = 2.0
+message_drop_probability = 0.04
+stale_after_minutes = 10.0
+reroute_delay_minutes = 6.0
+low_bandwidth_threshold_minutes = 16.0
 node_service_multiplier = 1.0
 
-[infrastructure]
-[[infrastructure.events]]
-start_minute = 20
-end_minute = 160
-target_type = "node"
-target_id = "HUB_B"
-state = "reduced"
-service_multiplier = 0.45
+[[vehicle_injections]]
+start_minute = 35
+vehicle_id = "VX01"
+mission_class = "cargo"
+route = "HUB_A|HUB_B"
+reserve_energy = 40
+supplier_id = "spoof_mesh"
+trust_state = "unknown"
+status = "queued"
+note = "adversary_injection"
+
+[trust]
+[[trust.events]]
+start_minute = 70
+target_type = "vehicle"
+target_id = "VX01"
+trigger = "spoof_detection"
+resulting_state = "quarantined"
 
 [safe_region]
 max_corridor_load_ratio = 0.95
 max_node_utilization_ratio = 0.92
 max_queue_ratio = 0.75
-max_stale_state_exposure_minutes = 15.0
+max_stale_state_exposure_minutes = 20.0
 min_trusted_participant_fraction = 0.55
 max_unsafe_admissions = 0
 min_reachable_landing_options = 1.0
-max_contingency_saturation_duration = 20.0
+max_contingency_saturation_duration = 25.0
 max_operator_interventions_per_hour = 8.0
 
 [operator]

@@ -2,7 +2,7 @@ PYTHON ?= python
 PIP ?= $(PYTHON) -m pip
 SCENARIO ?= weather_closure
 
-.PHONY: install test run dashboard demo release-check
+.PHONY: install test run dashboard demo dashboard-smoke release-check
 
 install:
 	$(PIP) install -r requirements.txt
@@ -19,6 +19,9 @@ dashboard:
 
 demo:
 	$(PYTHON) -m avn demo
+
+dashboard-smoke:
+	$(PYTHON) scripts/dashboard_smoke.py
 
 release-check:
 	$(PYTHON) scripts/release_check.py

@@ -2,7 +2,15 @@ from __future__ import annotations
 
 import networkx as nx
 
+from avn.core.policies import PolicyProfile
 from avn.core.state import CorridorCondition, CorridorRuntime, NodeCondition, NodeRuntime
+
+
+def _node_has_available_stand(runtime: NodeRuntime) -> bool:
+    capacity = runtime.definition.stand_capacity
+    if capacity is None:
+        return True
+    return len(runtime.stand_occupants) + runtime.reserved_arrivals < capacity
 
 
 def compute_route(
@@ -13,6 +21,7 @@ def compute_route(
     corridor_conditions: dict[str, CorridorCondition],
     origin: str,
     destination: str,
+    policy: PolicyProfile,
 ) -> list[str] | None:
     route_graph = nx.DiGraph()
     for node_id, node_data in graph.nodes(data=True):
@@ -28,12 +37,18 @@ def compute_route(
             continue
         if source not in route_graph or target not in route_graph:
             continue
-        node_penalty = max(0.0, len(nodes[target].queue) - nodes[target].definition.queue_alert_threshold) * 3.0
-        weather_penalty = condition.weather_severity * 20.0
+        if target != destination and not _node_has_available_stand(nodes[target]):
+            continue
+        node_penalty = (
+            max(0.0, len(nodes[target].queue) - nodes[target].definition.queue_alert_threshold)
+            * policy.queue_penalty_weight
+        )
+        weather_penalty = condition.weather_severity * policy.weather_penalty_weight
+        occupancy_penalty = len(corridor.occupants) * policy.occupancy_penalty_weight
         route_graph.add_edge(
             source,
             target,
-            weight=float(data["travel_minutes"]) + weather_penalty + node_penalty + len(corridor.occupants),
+            weight=float(data["travel_minutes"]) + weather_penalty + node_penalty + occupancy_penalty,
         )
     try:
         return nx.shortest_path(route_graph, origin, destination, weight="weight")

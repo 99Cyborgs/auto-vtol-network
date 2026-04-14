@@ -1,9 +1,12 @@
-scenario_name = "dense_weather"
-description = "Dense-load weather stress for Phase 2B command-surface compatibility."
+# Historical Phase 2B fixture retained for reference only.
+# Use `python -m avn adaptive-sweep <manifest.json>` for canonical governed sweeps.
+
+scenario_name = "stale_state_nominal_load"
+description = "Nominal physical demand with stale information pressure and reservation invalidation."
 time_step_minutes = 5
-duration_minutes = 210
+duration_minutes = 180
 output_root = "../outputs"
-seed = 1201
+seed = 1202
 
 [data_sources]
 nodes = "../data/phase2b/nodes.csv"
@@ -35,47 +38,43 @@ supplier_type = "identity"
 supplier_id = "rescue_ops"
 supplier_type = "identity"
 
-[modifiers]
-demand_multiplier = 1.8
-weather_multiplier = 1.2
-
 [disturbances.base]
-weather_severity = 0.18
-comms_reliability = 0.95
-comms_latency_minutes = 1.0
-message_drop_probability = 0.03
-stale_after_minutes = 12.0
-reroute_delay_minutes = 5.0
-low_bandwidth_threshold_minutes = 18.0
+weather_severity = 0.12
+comms_reliability = 0.76
+comms_latency_minutes = 6.0
+message_drop_probability = 0.18
+stale_after_minutes = 8.0
+reroute_delay_minutes = 10.0
+low_bandwidth_threshold_minutes = 14.0
 node_service_multiplier = 1.0
 
 [[disturbances.schedule]]
-start_minute = 60
-weather_severity = 0.45
-comms_reliability = 0.92
-comms_latency_minutes = 2.0
-message_drop_probability = 0.06
-stale_after_minutes = 12.0
-reroute_delay_minutes = 6.0
-low_bandwidth_threshold_minutes = 18.0
-node_service_multiplier = 0.95
+start_minute = 45
+weather_severity = 0.12
+comms_reliability = 0.68
+comms_latency_minutes = 8.0
+message_drop_probability = 0.24
+stale_after_minutes = 8.0
+reroute_delay_minutes = 12.0
+low_bandwidth_threshold_minutes = 14.0
+node_service_multiplier = 1.0
 
 [[disturbances.schedule]]
-start_minute = 120
-weather_severity = 0.70
-comms_reliability = 0.88
-comms_latency_minutes = 3.0
-message_drop_probability = 0.09
-stale_after_minutes = 12.0
+start_minute = 105
+weather_severity = 0.12
+comms_reliability = 0.82
+comms_latency_minutes = 4.0
+message_drop_probability = 0.12
+stale_after_minutes = 8.0
 reroute_delay_minutes = 8.0
-low_bandwidth_threshold_minutes = 18.0
-node_service_multiplier = 0.90
+low_bandwidth_threshold_minutes = 14.0
+node_service_multiplier = 1.0
 
 [safe_region]
 max_corridor_load_ratio = 0.95
 max_node_utilization_ratio = 0.92
 max_queue_ratio = 0.75
-max_stale_state_exposure_minutes = 20.0
+max_stale_state_exposure_minutes = 15.0
 min_trusted_participant_fraction = 0.55
 max_unsafe_admissions = 0
 min_reachable_landing_options = 1.0

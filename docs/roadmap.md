@@ -1,11 +1,12 @@
 # Roadmap
 
-## Next Technical Steps
+## Current Phase
 
-- Add richer node-side turnaround and stand occupancy logic.
-- Add scenario authoring helpers and schema validation for scenario JSON.
-- Expose replay loading from a saved `replay.json` path in the dashboard CLI.
-- Add optional statistical batch runs around the deterministic scenario suite without changing the mainline replay contract.
+Post-unification stabilization. The canonical `avn` runtime, governed artifact contract, dashboard replay loading, batch runs, scenario schema validation, and adaptive sweep CLI are already live.
+
+## Remaining Gaps
+
+- Prune historical archive surfaces that are no longer needed for reference or provenance.
 
 ## Explicitly Deferred
 

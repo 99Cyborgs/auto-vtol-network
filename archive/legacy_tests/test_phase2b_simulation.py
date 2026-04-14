@@ -6,10 +6,11 @@ from avn.sweep import run_phase2b_sweep
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LEGACY_CONFIGS = ROOT / "archive" / "legacy_runtime" / "configs"
 
 
 def _run_named_config(config_name: str, tmp_path: Path, leaf: str):
-    config = load_simulation_config(ROOT / "configs" / config_name)
+    config = load_simulation_config(LEGACY_CONFIGS / config_name)
     config.output_root = tmp_path / leaf
     result = SimulationEngine(config).run()
     assert result.metrics_path.exists()
@@ -77,7 +78,7 @@ def test_compound_scenario_is_deterministic_for_fixed_seed(tmp_path: Path) -> No
 
 
 def test_phase2b_sweep_emits_aggregate_table(tmp_path: Path) -> None:
-    result = run_phase2b_sweep(ROOT / "configs" / "trust_and_comms_compound.toml", output_root=tmp_path)
+    result = run_phase2b_sweep(LEGACY_CONFIGS / "trust_and_comms_compound.toml", output_root=tmp_path)
 
     assert result.aggregate_csv_path.exists()
     assert result.summary_json_path.exists()

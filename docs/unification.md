@@ -67,3 +67,6 @@ Current status:
 
 Final cleanup still pending:
 - none inside the live package tree; remaining cleanup is historical archive pruning only
+
+Historical naming note:
+- `phase2b` labels that remain in fixture paths or archived compatibility files are historical identifiers only; they do not indicate a second active runtime phase.

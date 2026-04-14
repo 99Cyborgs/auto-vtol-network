@@ -1,62 +1,70 @@
+![Auto-VTOL-Network hero](docs/assets/flight-hero.svg)
+
 # Auto-VTOL-Network
 
-Auto-VTOL-Network now has one canonical runtime surface: `src/avn/`.
+Auto-VTOL-Network is a deterministic simulator for autonomous VTOL traffic moving through a network of hubs, vertiports, corridors, weather disruptions, and dispatch policies.
 
-`src/avn` is the source of truth for:
+It is built to answer questions like:
 
-- runtime models and replay state,
-- governed threshold ledgers and promotion decisions,
-- artifact writing and validation,
-- adaptive sweep execution,
-- CLI and packaged entrypoints.
+- What happens to flow when a corridor closes mid-run?
+- Which routing policy sheds queue pressure better?
+- How much reserve energy is left after a diversion?
+- Can a run be replayed, validated, and compared without ambiguity?
 
-The former `avn_v2` package has been removed. `avn` is the only supported runtime, packaging, and CLI surface.
+Every run produces a replayable state history, a small dashboard-friendly artifact bundle, and governed validation outputs that make the result easy to inspect or reuse.
 
-The repo demonstrates:
+## Why This Project Exists
 
-- corridor traffic flow,
-- node throughput and queue pressure,
-- weather-driven degradation,
-- reroutes under closures or degraded conditions,
-- alerts and contingency handling,
-- deterministic replayable scenarios,
-- governed threshold and release artifacts,
-- canonical adaptive sweep outputs.
+Auto-VTOL-Network aims to make network-level VTOL behavior understandable without needing a full production control plane.
+
+- It gives you deterministic scenarios instead of opaque live state.
+- It keeps routing, queueing, weather, and alert behavior visible step by step.
+- It lets you compare policy choices with the same scenario inputs.
+- It writes validation and release-style artifacts from the same run output used by the dashboard.
+
+## What You Can Do
+
+- Run built-in scenarios such as weather closure, node saturation, priority dispatch, incident diversion, and metro surge.
+- Compare policy modes that trade off speed, congestion, and disruption avoidance.
+- Open a local dashboard that replays the exact state emitted by the simulator.
+- Validate a run directory or a batch directory from the CLI.
+- Run batch comparisons and adaptive sweeps over governed thresholds.
 
 ## Quick Start
 
-1. Install:
+Install the package:
 
 ```bash
 python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
-2. Run a headless scenario:
-
-```bash
-python -m avn run weather_closure
-```
-
-3. Launch the dashboard:
-
-```bash
-python -m avn dashboard
-```
-
-4. Launch the canonical demo scenario directly:
+Try the fastest demo path:
 
 ```bash
 python -m avn demo
 ```
 
-5. Run tests:
+Run a headless scenario and inspect its artifacts:
+
+```bash
+python -m avn run weather_closure
+python -m avn validate-run outputs/avn/<run-dir>
+```
+
+Launch the dashboard against a saved replay:
+
+```bash
+python -m avn dashboard --replay outputs/avn/<run-dir>/replay.json
+```
+
+Run the full test suite:
 
 ```bash
 python -m pytest
 ```
 
-6. Run the canonical release gate:
+Run the release gate:
 
 ```bash
 make release-check
@@ -68,15 +76,17 @@ Portable fallback when `make` is unavailable:
 python scripts/release_check.py
 ```
 
-## Mainline Structure
+## How It Works
 
-- `src/avn/core/`: graph, routing, weather, queueing, metrics, alerts, and replay state definitions.
-- `src/avn/sim/`: scenario loading, disturbance injection, deterministic event loop, run output, and replay IO.
-- `src/avn/governance/`: canonical threshold ledger, promotion decision, artifact manifest, validation, and adaptive sweep surfaces.
-- `src/avn/scenarios/`: built-in deterministic scenario suite.
-- `src/avn/ui/`: local HTTP dashboard and serialized state contract.
-- `docs/`: concise product-facing architecture and usage docs.
-- `archive/`: superseded v2 assets plus archived pre-consolidation analytical/runtime modules retained for history only.
+The canonical runtime surface is `src/avn/`.
+
+- `src/avn/core/` holds graph primitives, routing, weather effects, queue logic, metrics, alerts, and replay state definitions.
+- `src/avn/sim/` holds scenario loading, the simulation engine, replay helpers, batch execution, and runtime orchestration.
+- `src/avn/governance/` holds threshold ledgers, promotion decisions, validation, manifests, and adaptive sweep support.
+- `src/avn/scenarios/` holds the built-in deterministic scenario suite.
+- `src/avn/ui/` holds the local dashboard that consumes the simulator replay contract directly.
+
+The historical `avn_v2` surface has been removed from the live runtime. Archived material remains under `archive/` for provenance only.
 
 ## Built-In Scenarios
 
@@ -84,47 +94,80 @@ python scripts/release_check.py
 - `weather_closure`
 - `node_saturation`
 - `priority_mission`
+- `incident_diversion_balanced`
+- `incident_diversion_avoidant`
+- `metro_surge_balanced`
+- `metro_surge_throughput_max`
 
-List them from the CLI with:
+List them from the CLI:
 
 ```bash
 python -m avn list-scenarios
 ```
 
+## Policy Modes
+
+- `balanced`: balances travel time against congestion and moderate disruption penalties.
+- `throughput_max`: prefers routes that shed queue pressure and corridor crowding, even if they are longer.
+- `disruption_avoidant`: avoids degraded weather corridors earlier and will hold instead of dispatching into higher-risk weather.
+
 ## Run Outputs
 
-Each headless run now writes one canonical governed artifact family:
+Each headless run writes one governed artifact family under `outputs/avn/`:
 
-- `replay.json`: deterministic time-stepped state history consumed by the dashboard contract,
-- `summary.json`: compact scenario summary and alert counts,
-- `threshold_ledger.json`: threshold evaluations derived from the run summary,
-- `promotion_decisions.json`: release decisions derived from the threshold ledger,
-- `validation_report.json`: schema and consistency validation status,
+- `replay.json`: deterministic time-stepped state history consumed by the dashboard.
+- `summary.json`: compact scenario summary and alert counts.
+- `threshold_ledger.json`: threshold evaluations derived from the run summary.
+- `promotion_decisions.json`: release decisions derived from the threshold ledger.
+- `validation_report.json`: schema and consistency validation status.
 - `artifact_manifest.json`: artifact inventory plus content hashes.
 
-Default output root: `outputs/avn/`.
-
-Validate a run directory with:
+Validate a batch directory:
 
 ```bash
-python -m avn validate-run outputs/avn/<run-dir>
+python -m avn batch-run baseline_flow weather_closure --repeat 2
+python -m avn validate-batch outputs/avn_batch/<batch-dir>
 ```
 
-Run the canonical adaptive sweep with a manifest JSON file:
+Run an adaptive sweep from a manifest:
 
 ```bash
-python -m avn adaptive-sweep path/to/manifest.json
+python -m avn adaptive-sweep configs/example_adaptive_sweep_manifest.json
 ```
 
-Compatibility policy:
+Refresh the packaged demo replay bundles after demo-scenario changes:
 
-- `python -m avn` is the only canonical CLI surface.
-- archived `avn_v2` modules, legacy sweep code, and skill-pack content are historical references under `archive/`; they are not release surfaces or compatibility targets.
+```bash
+python scripts/refresh_demo_replays.py
+```
+
+## Roadmap
+
+### Now
+
+- Canonical `avn` runtime and CLI
+- Deterministic scenario replay
+- Local dashboard replay loading
+- Batch execution and validation
+- Adaptive sweep support
+- Governed run artifacts and release checks
+
+### Next
+
+- Continue pruning historical archive surfaces that are no longer needed for reference or provenance
+- Keep tightening the public demo and documentation flow around the canonical runtime
+
+### Explicitly Deferred
+
+- Production control-plane behavior
+- Certification-style governance workflows
+- External ingestion pipelines
+- Policy-heavy evidence packaging
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
-- [Unification Plan](docs/unification.md)
 - [Simulator](docs/simulator.md)
 - [Dashboard Demo](docs/dashboard_demo.md)
-- [Roadmap](docs/roadmap.md)
+- [Unification Plan](docs/unification.md)
+- [Roadmap Notes](docs/roadmap.md)

@@ -9,4 +9,7 @@ venv/
 dist/
 build/
 outputs/
+output/
+.playwright-cli/
 
+.gitnexus

@@ -6,6 +6,7 @@
   "duration_minutes": 80,
   "time_step_minutes": 5,
   "recommended": false,
+  "policy_id": "balanced",
   "output_root": "outputs/avn",
   "alert_thresholds": {
     "queue_pressure": 3,

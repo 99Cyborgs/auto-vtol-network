@@ -1,9 +1,12 @@
-scenario_name = "emergency_pad_outage"
-description = "Emergency pad outage that forces contingency competition and reserve-constrained diversion."
+# Historical Phase 2B fixture retained for reference only.
+# Use `python -m avn adaptive-sweep <manifest.json>` for canonical governed sweeps.
+
+scenario_name = "comms_plus_hub_degraded"
+description = "Coupled comms freshness degradation and hub service loss to separate stale information from raw node pressure."
 time_step_minutes = 5
 duration_minutes = 200
 output_root = "../outputs"
-seed = 1206
+seed = 1208
 
 [data_sources]
 nodes = "../data/phase2b/nodes.csv"
@@ -36,42 +39,32 @@ supplier_id = "rescue_ops"
 supplier_type = "identity"
 
 [modifiers]
-demand_multiplier = 1.30
-reserve_consumption_multiplier = 1.15
+demand_multiplier = 1.60
 
 [disturbances.base]
-weather_severity = 0.18
-comms_reliability = 0.92
-comms_latency_minutes = 2.0
-message_drop_probability = 0.05
-stale_after_minutes = 10.0
-reroute_delay_minutes = 8.0
-low_bandwidth_threshold_minutes = 16.0
+weather_severity = 0.16
+comms_reliability = 0.72
+comms_latency_minutes = 6.0
+message_drop_probability = 0.18
+stale_after_minutes = 8.0
+reroute_delay_minutes = 12.0
+low_bandwidth_threshold_minutes = 14.0
 node_service_multiplier = 1.0
 
 [infrastructure]
 [[infrastructure.events]]
-start_minute = 30
-end_minute = 180
+start_minute = 20
+end_minute = 160
 target_type = "node"
-target_id = "PAD_1"
-state = "closed"
-service_multiplier = 0.0
-
-[[infrastructure.events]]
-start_minute = 45
-end_minute = 180
-target_type = "node"
-target_id = "PAD_3"
+target_id = "HUB_B"
 state = "reduced"
-service_multiplier = 0.9
-contingency_slots_delta = -1
+service_multiplier = 0.45
 
 [safe_region]
 max_corridor_load_ratio = 0.95
 max_node_utilization_ratio = 0.92
 max_queue_ratio = 0.75
-max_stale_state_exposure_minutes = 20.0
+max_stale_state_exposure_minutes = 15.0
 min_trusted_participant_fraction = 0.55
 max_unsafe_admissions = 0
 min_reachable_landing_options = 1.0

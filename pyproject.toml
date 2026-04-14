@@ -26,6 +26,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
+"avn.demo_assets" = ["*.json"]
 "avn.scenarios" = ["*.json"]
 "avn.ui.dashboard" = ["*.html", "*.css", "*.js"]
 

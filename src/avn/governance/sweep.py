@@ -10,6 +10,7 @@ from avn.governance.thresholds import build_promotion_decisions, build_threshold
 from avn.governance.validation import build_run_validation_report
 from avn.sim.runner import run_loaded_scenario
 from avn.sim.scenario_loader import load_scenario
+from avn.core.policies import get_policy_profile
 
 
 def load_sweep_manifest(path: str | Path) -> AdaptiveSweepManifest:
@@ -138,8 +139,13 @@ def run_adaptive_sweep(manifest_path: str | Path) -> tuple[AdaptiveSweepResult, 
     validation = build_run_validation_report(
         replay={
             "scenario_id": base_scenario.scenario_id,
+            "policy": {
+                "policy_id": get_policy_profile(base_scenario.policy_id).policy_id,
+                "label": get_policy_profile(base_scenario.policy_id).label,
+                "description": get_policy_profile(base_scenario.policy_id).description,
+            },
             "summary": {"sweep_id": manifest.sweep_id},
-            "steps": [],
+            "steps": [{"nodes": [], "corridors": [], "vehicles": [], "metrics": {}, "alerts": [], "events": []}],
             "event_log": [],
         },
         summary={"scenario_id": base_scenario.scenario_id, "completed_vehicles": 0, "max_queue_length": 0, "max_corridor_load_ratio": 0},

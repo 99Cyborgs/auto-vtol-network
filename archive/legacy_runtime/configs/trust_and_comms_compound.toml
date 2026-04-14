@@ -1,3 +1,6 @@
+# Historical Phase 2B fixture retained for reference only.
+# Use `python -m avn adaptive-sweep <manifest.json>` for canonical governed sweeps.
+
 scenario_name = "trust_and_comms_compound"
 description = "Trust degradation, stale information, and contingency loss combined to classify the first dominant failure mechanism."
 time_step_minutes = 5

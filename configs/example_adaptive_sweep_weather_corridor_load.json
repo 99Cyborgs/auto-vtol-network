@@ -1,0 +1,11 @@
+{
+  "sweep_id": "weather-corridor-load-threshold-sweep",
+  "scenario": "weather_closure",
+  "output_root": "outputs/avn_sweeps",
+  "metric_key": "max_corridor_load_ratio",
+  "axis": {
+    "path": "alert_thresholds.corridor_load_ratio",
+    "values": [1.5, 2.5]
+  },
+  "max_iterations": 3
+}

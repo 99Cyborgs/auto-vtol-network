@@ -187,7 +187,7 @@ def generate_tranche_slices(
 
 
 def get_built_in_tranches() -> dict[str, TrancheDefinition]:
-    configs = _repo_root() / "configs"
+    configs = _repo_root() / "archive" / "legacy_runtime" / "configs"
     common_metrics = (
         "first_dominant_failure_mechanism",
         "dominant_failure_mode",

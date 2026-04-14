@@ -1,3 +1,6 @@
+# Historical Phase 2B fixture retained for reference only.
+# Use `python -m avn adaptive-sweep <manifest.json>` for canonical governed sweeps.
+
 scenario_name = "supplier_compromise"
 description = "Identity supplier compromise that propagates trust degradation and quarantine pressure."
 time_step_minutes = 5

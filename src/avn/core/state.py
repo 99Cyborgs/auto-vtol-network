@@ -25,6 +25,8 @@ class NodeDefinition:
     service_rate_per_hour: float
     queue_alert_threshold: int
     emergency_capacity: int = 0
+    turnaround_minutes: int = 0
+    stand_capacity: int | None = None
 
 
 @dataclass(slots=True)
@@ -77,6 +79,7 @@ class ScenarioDefinition:
     vehicles: list[VehicleDefinition]
     disturbances: list[DisturbanceDefinition]
     output_root: Path
+    policy_id: str = "balanced"
     alert_thresholds: dict[str, float | int] = field(default_factory=dict)
 
 
@@ -116,6 +119,7 @@ class VehicleRuntime:
     contingency_target: str | None = None
     last_reroute_minute: int | None = None
     completed_minute: int | None = None
+    turnaround_complete_minute: int | None = None
 
     @classmethod
     def from_definition(cls, definition: VehicleDefinition) -> "VehicleRuntime":
@@ -139,6 +143,8 @@ class NodeRuntime:
     service_credit: float = 0.0
     departures_this_step: int = 0
     occupancy: int = 0
+    stand_occupants: set[str] = field(default_factory=set)
+    reserved_arrivals: int = 0
 
 
 @dataclass(slots=True)
@@ -209,6 +215,13 @@ class VehicleSnapshot:
 
 
 @dataclass(slots=True)
+class PolicySnapshot:
+    policy_id: str
+    label: str
+    description: str
+
+
+@dataclass(slots=True)
 class StepSnapshot:
     time_minute: int
     nodes: list[NodeSnapshot]
@@ -224,6 +237,7 @@ class ReplayBundle:
     scenario_id: str
     name: str
     description: str
+    policy: PolicySnapshot
     seed: int
     duration_minutes: int
     time_step_minutes: int

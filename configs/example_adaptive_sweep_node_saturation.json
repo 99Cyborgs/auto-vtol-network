@@ -1,0 +1,11 @@
+{
+  "sweep_id": "node-saturation-queue-threshold-sweep",
+  "scenario": "node_saturation",
+  "output_root": "outputs/avn_sweeps",
+  "metric_key": "max_queue_length",
+  "axis": {
+    "path": "alert_thresholds.queue_pressure",
+    "values": [1, 3]
+  },
+  "max_iterations": 3
+}

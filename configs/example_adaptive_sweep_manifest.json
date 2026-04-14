@@ -1,0 +1,11 @@
+{
+  "sweep_id": "baseline-queue-threshold-sweep",
+  "scenario": "baseline_flow",
+  "output_root": "outputs/avn_sweeps",
+  "metric_key": "max_queue_length",
+  "axis": {
+    "path": "alert_thresholds.queue_pressure",
+    "values": [0, 10]
+  },
+  "max_iterations": 3
+}

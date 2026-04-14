@@ -1,3 +1,6 @@
+# Historical Phase 2B fixture retained for reference only.
+# Use `python -m avn adaptive-sweep <manifest.json>` for canonical governed sweeps.
+
 scenario_name = "weather_plus_contingency_saturation"
 description = "Weather, reserve burn, and landing-slot loss combined to force contingency saturation and no-admissible-landing risk."
 time_step_minutes = 5

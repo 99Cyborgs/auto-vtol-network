@@ -9,8 +9,9 @@
   <body>
     <div class="shell">
       <aside class="sidebar">
-        <h1>AVN Operator Console</h1>
-        <p class="lede">Deterministic corridor-and-node VTOL replay surface.</p>
+        <p class="eyebrow">Auto-VTOL Network</p>
+        <h1>Traffic Policy Console</h1>
+        <p class="lede">Deterministic replay surface for routing policy, disruption posture, and visible traffic flow.</p>
         <label class="control">
           <span>Scenario</span>
           <select id="scenario-select"></select>
@@ -23,24 +24,45 @@
           <span>Time</span>
           <input id="timeline" type="range" min="0" max="0" value="0" />
         </label>
-        <div id="summary" class="panel"></div>
-        <div id="alerts" class="panel list-panel"></div>
+        <div id="summary" class="panel summary-panel"></div>
+        <div class="panel legend-panel">
+          <h3>Legend</h3>
+          <div id="legend" class="legend"></div>
+        </div>
       </aside>
       <main class="main">
         <section class="hero panel">
-          <div>
+          <div class="hero-copy">
+            <p class="eyebrow">Replay Brief</p>
             <h2 id="scenario-name"></h2>
             <p id="scenario-description"></p>
           </div>
-          <div id="metric-strip" class="metric-strip"></div>
+          <div class="hero-meta">
+            <div id="policy-panel" class="policy-panel"></div>
+            <div id="metric-strip" class="metric-strip"></div>
+          </div>
+        </section>
+        <section class="status-strip">
+          <div id="disruptions" class="panel status-panel"></div>
+          <div id="posture" class="panel status-panel"></div>
         </section>
         <section class="grid">
           <div class="panel canvas-panel">
+            <div class="canvas-header">
+              <div>
+                <h3>Network State</h3>
+                <p>Width shows live load. Color shows open, degraded, or closed corridor posture.</p>
+              </div>
+              <div id="frame-note" class="frame-note"></div>
+            </div>
             <svg id="network-canvas" viewBox="0 0 1000 720"></svg>
           </div>
-          <div class="panel">
-            <h3>Event Log</h3>
-            <div id="events" class="list-panel"></div>
+          <div class="inspector">
+            <div id="alerts" class="panel list-panel"></div>
+            <div class="panel">
+              <h3>Event Log</h3>
+              <div id="events" class="list-panel"></div>
+            </div>
           </div>
         </section>
       </main>

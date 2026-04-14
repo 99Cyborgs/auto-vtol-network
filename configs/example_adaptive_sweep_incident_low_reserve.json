@@ -1,0 +1,11 @@
+{
+  "sweep_id": "incident-low-reserve-threshold-sweep",
+  "scenario": "incident_diversion_avoidant",
+  "output_root": "outputs/avn_sweeps",
+  "metric_key": "min_reserve_energy",
+  "axis": {
+    "path": "alert_thresholds.low_reserve",
+    "values": [12.0, 18.0]
+  },
+  "max_iterations": 3
+}

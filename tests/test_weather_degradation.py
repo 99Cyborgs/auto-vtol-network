@@ -1,5 +1,5 @@
 from avn.core.weather import corridor_capacity_factor, corridor_speed_factor
-from avn.sim.event_loop import Simulator
+from avn.sim.engine import SimulationEngine
 from avn.sim.scenario_loader import load_scenario
 
 
@@ -10,7 +10,7 @@ def test_weather_thresholds_reduce_capacity_and_speed() -> None:
 
 
 def test_weather_closure_creates_closed_corridor_frames() -> None:
-    replay = Simulator(load_scenario("weather_closure")).run()
+    replay = SimulationEngine(load_scenario("weather_closure")).run()
     north_edge_frames = [
         corridor
         for step in replay.steps

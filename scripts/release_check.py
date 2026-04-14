@@ -50,6 +50,8 @@ def _inspect_wheel(wheel_path: Path) -> None:
         names = archive.namelist()
     required_entries = {
         "avn/__main__.py",
+        "avn/sim/batch.py",
+        "avn/demo_assets/incident_diversion_balanced.json",
         "avn/governance/artifacts.py",
     }
     missing = sorted(entry for entry in required_entries if not any(name.endswith(entry) for name in names))
@@ -69,18 +71,58 @@ def _venv_python(venv_dir: Path) -> Path:
 def _smoke_installed_wheel(wheel_path: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="avn-release-check-") as temp_dir:
         venv_dir = Path(temp_dir) / "venv"
+        outputs_root = Path(temp_dir) / "outputs"
         _run([sys.executable, "-m", "venv", str(venv_dir)])
         python_bin = _venv_python(venv_dir)
         _run([str(python_bin), "-m", "pip", "install", str(wheel_path)])
         _run([str(python_bin), "-m", "avn", "--help"])
-        _run([str(python_bin), "-m", "avn", "run", "baseline_flow", "--output-root", str(Path(temp_dir) / "outputs")])
-        run_dirs = sorted((Path(temp_dir) / "outputs").glob("baseline_flow_*"))
+        _run(
+            [
+                str(python_bin),
+                "-c",
+                "from avn.demo_assets import load_demo_replay_payloads; "
+                "payloads = load_demo_replay_payloads(); "
+                "assert len(payloads) == 4; "
+                "assert payloads[0]['scenario_id'] == 'incident_diversion_balanced'",
+            ]
+        )
+        _run([str(python_bin), "-m", "avn", "run", "baseline_flow", "--output-root", str(outputs_root)])
+        run_dirs = sorted(outputs_root.glob("baseline_flow_*"))
         if len(run_dirs) != 1:
             raise RuntimeError(f"Expected one run directory, found {len(run_dirs)}")
         report = _run([str(python_bin), "-m", "avn", "validate-run", str(run_dirs[0])])
         payload = json.loads(report.stdout)
         if payload["status"] != "passed":
             raise RuntimeError(f"Installed wheel validation failed: {payload}")
+
+        batch_root = outputs_root / "batch"
+        _run(
+            [
+                str(python_bin),
+                "-m",
+                "avn",
+                "batch-run",
+                "baseline_flow",
+                "weather_closure",
+                "--repeat",
+                "1",
+                "--output-root",
+                str(batch_root),
+                "--batch-id",
+                "release-check-batch",
+            ]
+        )
+        batch_dir = batch_root / "release-check-batch"
+        summary_payload = json.loads((batch_dir / "batch_summary.json").read_text(encoding="utf-8"))
+        manifest_payload = json.loads((batch_dir / "batch_manifest.json").read_text(encoding="utf-8"))
+        if summary_payload["run_count"] != 2:
+            raise RuntimeError(f"Installed wheel batch summary has unexpected run_count: {summary_payload}")
+        if len(manifest_payload["runs"]) != 2:
+            raise RuntimeError(f"Installed wheel batch manifest has unexpected run count: {manifest_payload}")
+        batch_report = _run([str(python_bin), "-m", "avn", "validate-batch", str(batch_dir)])
+        batch_payload = json.loads(batch_report.stdout)
+        if batch_payload["status"] != "passed":
+            raise RuntimeError(f"Installed wheel batch validation failed: {batch_payload}")
 
 
 def main() -> int:

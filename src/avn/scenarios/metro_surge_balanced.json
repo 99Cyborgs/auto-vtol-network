@@ -1,0 +1,57 @@
+{
+  "scenario_id": "metro_surge_balanced",
+  "name": "Metro Surge (Balanced)",
+  "description": "Balanced policy lets a commuter wave lean on the shorter north branch before congestion spills traffic toward the south branch.",
+  "seed": 31,
+  "duration_minutes": 110,
+  "time_step_minutes": 5,
+  "recommended": false,
+  "policy_id": "balanced",
+  "output_root": "outputs/avn",
+  "alert_thresholds": {
+    "queue_pressure": 3,
+    "corridor_load_ratio": 0.68,
+    "low_reserve": 20.0
+  },
+  "nodes": [
+    {"node_id": "WEST_HUB", "label": "West Hub", "node_type": "hub", "x": 110, "y": 320, "service_rate_per_hour": 50, "queue_alert_threshold": 3, "emergency_capacity": 2},
+    {"node_id": "NORTH_PORT", "label": "North Port", "node_type": "vertiport", "x": 330, "y": 170, "service_rate_per_hour": 24, "queue_alert_threshold": 2, "emergency_capacity": 0},
+    {"node_id": "SOUTH_PORT", "label": "South Port", "node_type": "vertiport", "x": 330, "y": 500, "service_rate_per_hour": 24, "queue_alert_threshold": 2, "emergency_capacity": 0},
+    {"node_id": "EAST_HUB", "label": "East Hub", "node_type": "hub", "x": 760, "y": 320, "service_rate_per_hour": 30, "queue_alert_threshold": 3, "emergency_capacity": 2},
+    {"node_id": "PAD_DELTA", "label": "Pad Delta", "node_type": "emergency_pad", "x": 920, "y": 150, "service_rate_per_hour": 14, "queue_alert_threshold": 2, "emergency_capacity": 3}
+  ],
+  "corridors": [
+    {"corridor_id": "W_N", "origin": "WEST_HUB", "destination": "NORTH_PORT", "length_km": 18, "base_speed_kmh": 145, "base_capacity_per_hour": 8, "weather_exposure": 0.5},
+    {"corridor_id": "N_E", "origin": "NORTH_PORT", "destination": "EAST_HUB", "length_km": 20, "base_speed_kmh": 140, "base_capacity_per_hour": 8, "weather_exposure": 0.6},
+    {"corridor_id": "W_S", "origin": "WEST_HUB", "destination": "SOUTH_PORT", "length_km": 20, "base_speed_kmh": 140, "base_capacity_per_hour": 10, "weather_exposure": 0.4},
+    {"corridor_id": "S_E", "origin": "SOUTH_PORT", "destination": "EAST_HUB", "length_km": 22, "base_speed_kmh": 136, "base_capacity_per_hour": 10, "weather_exposure": 0.4},
+    {"corridor_id": "N_S", "origin": "NORTH_PORT", "destination": "SOUTH_PORT", "length_km": 16, "base_speed_kmh": 125, "base_capacity_per_hour": 7, "weather_exposure": 0.3},
+    {"corridor_id": "S_N", "origin": "SOUTH_PORT", "destination": "NORTH_PORT", "length_km": 16, "base_speed_kmh": 125, "base_capacity_per_hour": 7, "weather_exposure": 0.3},
+    {"corridor_id": "E_PAD", "origin": "EAST_HUB", "destination": "PAD_DELTA", "length_km": 16, "base_speed_kmh": 118, "base_capacity_per_hour": 8, "weather_exposure": 0.3},
+    {"corridor_id": "PAD_E", "origin": "PAD_DELTA", "destination": "EAST_HUB", "length_km": 16, "base_speed_kmh": 118, "base_capacity_per_hour": 8, "weather_exposure": 0.3}
+  ],
+  "vehicles": [
+    {"vehicle_id": "SURGE_01", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 0, "mission_class": "passenger", "reserve_energy": 126},
+    {"vehicle_id": "SURGE_02", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 0, "mission_class": "passenger", "reserve_energy": 126},
+    {"vehicle_id": "SURGE_03", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 5, "mission_class": "passenger", "reserve_energy": 126},
+    {"vehicle_id": "SURGE_04", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 5, "mission_class": "cargo", "reserve_energy": 128},
+    {"vehicle_id": "SURGE_05", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 10, "mission_class": "passenger", "reserve_energy": 126},
+    {"vehicle_id": "SURGE_06", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 10, "mission_class": "passenger", "reserve_energy": 126},
+    {"vehicle_id": "SURGE_07", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 15, "mission_class": "passenger", "reserve_energy": 126},
+    {"vehicle_id": "SURGE_08", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 15, "mission_class": "cargo", "reserve_energy": 128},
+    {"vehicle_id": "SURGE_09", "origin": "NORTH_PORT", "destination": "EAST_HUB", "release_minute": 15, "mission_class": "passenger", "reserve_energy": 82},
+    {"vehicle_id": "SURGE_10", "origin": "NORTH_PORT", "destination": "EAST_HUB", "release_minute": 20, "mission_class": "passenger", "reserve_energy": 82},
+    {"vehicle_id": "SURGE_11", "origin": "NORTH_PORT", "destination": "EAST_HUB", "release_minute": 25, "mission_class": "passenger", "reserve_energy": 82},
+    {"vehicle_id": "SURGE_12", "origin": "SOUTH_PORT", "destination": "EAST_HUB", "release_minute": 25, "mission_class": "passenger", "reserve_energy": 84},
+    {"vehicle_id": "SURGE_13", "origin": "WEST_HUB", "destination": "PAD_DELTA", "release_minute": 30, "mission_class": "cargo", "reserve_energy": 132},
+    {"vehicle_id": "SURGE_14", "origin": "WEST_HUB", "destination": "PAD_DELTA", "release_minute": 30, "mission_class": "passenger", "reserve_energy": 132},
+    {"vehicle_id": "SURGE_15", "origin": "NORTH_PORT", "destination": "EAST_HUB", "release_minute": 35, "mission_class": "passenger", "reserve_energy": 82},
+    {"vehicle_id": "SURGE_16", "origin": "SOUTH_PORT", "destination": "EAST_HUB", "release_minute": 35, "mission_class": "cargo", "reserve_energy": 84},
+    {"vehicle_id": "SURGE_17", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 40, "mission_class": "passenger", "reserve_energy": 126},
+    {"vehicle_id": "SURGE_18", "origin": "WEST_HUB", "destination": "EAST_HUB", "release_minute": 40, "mission_class": "passenger", "reserve_energy": 126}
+  ],
+  "disturbances": [
+    {"disturbance_id": "east_hub_turnaround_drag", "kind": "node", "target_id": "EAST_HUB", "start_minute": 20, "end_minute": 90, "weather_severity": 0.12, "status": "degraded", "capacity_multiplier": 1.0, "service_multiplier": 0.72, "note": "arrival banks compress gate turnaround"},
+    {"disturbance_id": "north_branch_haze", "kind": "corridor", "target_id": "N_E", "start_minute": 25, "end_minute": 85, "weather_severity": 0.18, "status": "open", "capacity_multiplier": 0.88, "service_multiplier": 1.0, "note": "light haze slows the north branch"}
+  ]
+}

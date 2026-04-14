@@ -7,8 +7,6 @@ from avn.governance.models import (
     ThresholdLedger,
     ValidationReport,
 )
-from avn.governance.sweep import run_adaptive_sweep
-from avn.governance.validation import validate_run_directory
 
 __all__ = [
     "ARTIFACT_CONTRACT_VERSION",
@@ -19,7 +17,24 @@ __all__ = [
     "ThresholdLedger",
     "ValidationReport",
     "run_adaptive_sweep",
+    "validate_batch_directory",
     "validate_run_directory",
     "write_run_artifacts",
     "write_sweep_artifacts",
 ]
+
+
+def __getattr__(name: str):
+    if name == "run_adaptive_sweep":
+        from avn.governance.sweep import run_adaptive_sweep
+
+        return run_adaptive_sweep
+    if name == "validate_batch_directory":
+        from avn.governance.validation import validate_batch_directory
+
+        return validate_batch_directory
+    if name == "validate_run_directory":
+        from avn.governance.validation import validate_run_directory
+
+        return validate_run_directory
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,0 +1,90 @@
+<svg width="1200" height="420" viewBox="0 0 1200 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Auto-VTOL-Network hero graphic</title>
+  <desc id="desc">A stylized sky scene showing a VTOL aircraft flying across a connected corridor network above a city horizon.</desc>
+  <defs>
+    <linearGradient id="sky" x1="160" y1="40" x2="1020" y2="380" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#081F3F"/>
+      <stop offset="0.42" stop-color="#0F4C81"/>
+      <stop offset="1" stop-color="#B9E6FF"/>
+    </linearGradient>
+    <linearGradient id="sunGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#FFE9A8" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#FFD16A" stop-opacity="0.05"/>
+    </linearGradient>
+    <linearGradient id="ground" x1="0" y1="320" x2="1200" y2="320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0D2746"/>
+      <stop offset="1" stop-color="#12395C"/>
+    </linearGradient>
+    <linearGradient id="wing" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#EAF6FF"/>
+      <stop offset="1" stop-color="#8CC9FF"/>
+    </linearGradient>
+    <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="18" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="420" rx="28" fill="url(#sky)"/>
+
+  <circle cx="976" cy="96" r="66" fill="url(#sunGlow)" filter="url(#softGlow)"/>
+  <circle cx="976" cy="96" r="28" fill="#FFF2C6" fill-opacity="0.9"/>
+
+  <path d="M114 282C208 198 290 164 408 154C556 142 638 196 758 206C870 216 952 186 1088 98" stroke="#A8E9FF" stroke-width="3" stroke-dasharray="10 10" stroke-linecap="round" opacity="0.8"/>
+  <path d="M90 318C198 256 312 236 430 238C566 240 676 286 814 270C916 258 1002 214 1114 126" stroke="#6AD0FF" stroke-width="2.5" stroke-dasharray="7 11" stroke-linecap="round" opacity="0.55"/>
+
+  <g opacity="0.95">
+    <circle cx="160" cy="278" r="10" fill="#C7F1FF"/>
+    <circle cx="356" cy="198" r="9" fill="#C7F1FF"/>
+    <circle cx="560" cy="182" r="10" fill="#C7F1FF"/>
+    <circle cx="784" cy="214" r="11" fill="#C7F1FF"/>
+    <circle cx="994" cy="168" r="10" fill="#C7F1FF"/>
+    <circle cx="1090" cy="108" r="8" fill="#C7F1FF"/>
+  </g>
+
+  <g opacity="0.42">
+    <circle cx="160" cy="278" r="24" fill="#8DE8FF"/>
+    <circle cx="356" cy="198" r="22" fill="#8DE8FF"/>
+    <circle cx="560" cy="182" r="24" fill="#8DE8FF"/>
+    <circle cx="784" cy="214" r="26" fill="#8DE8FF"/>
+    <circle cx="994" cy="168" r="24" fill="#8DE8FF"/>
+  </g>
+
+  <path d="M0 334C126 306 228 292 354 300C488 310 598 352 748 348C882 344 1018 302 1200 250V420H0V334Z" fill="url(#ground)"/>
+
+  <g opacity="0.6">
+    <rect x="142" y="284" width="16" height="70" rx="4" fill="#244E77"/>
+    <rect x="174" y="268" width="18" height="86" rx="4" fill="#244E77"/>
+    <rect x="205" y="296" width="12" height="58" rx="4" fill="#244E77"/>
+    <rect x="804" y="266" width="18" height="88" rx="4" fill="#244E77"/>
+    <rect x="838" y="248" width="18" height="106" rx="4" fill="#244E77"/>
+    <rect x="870" y="286" width="12" height="68" rx="4" fill="#244E77"/>
+    <rect x="1008" y="238" width="22" height="116" rx="4" fill="#244E77"/>
+    <rect x="1042" y="278" width="16" height="76" rx="4" fill="#244E77"/>
+    <rect x="1068" y="256" width="14" height="98" rx="4" fill="#244E77"/>
+  </g>
+
+  <g transform="translate(522 118) rotate(-10)">
+    <ellipse cx="0" cy="0" rx="120" ry="20" fill="#78DFFF" fill-opacity="0.18"/>
+    <path d="M-118 8L-34 -10L18 -10L120 6L74 20L22 18L-36 18L-118 8Z" fill="#D9F4FF"/>
+    <path d="M-20 -6L18 -44L46 -44L28 -8L92 4L90 20L28 14L8 38L-14 38L-2 12L-56 12L-78 32L-100 32L-78 8L-118 8L-118 -2L-78 -2L-52 -26L-28 -26L-44 -4L-20 -6Z" fill="url(#wing)"/>
+    <rect x="-8" y="-58" width="18" height="30" rx="9" fill="#EAF6FF"/>
+    <rect x="42" y="-56" width="18" height="30" rx="9" fill="#EAF6FF"/>
+    <rect x="-4" y="-86" width="10" height="28" rx="5" fill="#A8E9FF"/>
+    <rect x="46" y="-84" width="10" height="28" rx="5" fill="#A8E9FF"/>
+    <circle cx="1" cy="-72" r="12" stroke="#6FD6FF" stroke-width="4"/>
+    <circle cx="51" cy="-70" r="12" stroke="#6FD6FF" stroke-width="4"/>
+    <path d="M126 2C154 4 184 16 216 40" stroke="#C4F7FF" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <g opacity="0.42" fill="#EAF6FF">
+    <path d="M172 92C172 74 186 60 204 60C216 60 226 66 232 76C236 74 242 72 248 72C266 72 280 86 280 104C280 122 266 136 248 136H204C186 136 172 122 172 104V92Z"/>
+    <path d="M744 82C744 68 754 58 768 58C778 58 786 62 790 70C794 68 800 66 806 66C820 66 832 78 832 92C832 108 820 120 806 120H768C754 120 744 110 744 96V82Z"/>
+  </g>
+
+  <text x="92" y="108" fill="#F5FBFF" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="700">Auto-VTOL-Network</text>
+  <text x="92" y="148" fill="#CFEFFF" font-family="Segoe UI, Arial, sans-serif" font-size="20">Deterministic air-mobility flow, replay, and policy tradeoff simulation</text>
+</svg>

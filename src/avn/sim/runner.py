@@ -8,7 +8,7 @@ from avn.core.state import ReplayBundle, ScenarioDefinition
 from avn.governance.artifacts import write_run_artifacts
 from avn.governance.thresholds import build_promotion_decisions, build_threshold_ledger
 from avn.governance.validation import build_run_validation_report
-from avn.sim.event_loop import Simulator
+from avn.sim.engine import SimulationEngine
 from avn.sim.scenario_loader import load_scenario
 
 
@@ -36,7 +36,7 @@ def run_loaded_scenario(
     output_root: str | Path | None = None,
     output_name: str | None = None,
 ) -> RunResult:
-    replay = Simulator(scenario).run()
+    replay = SimulationEngine(scenario).run()
     root = Path(output_root).resolve() if output_root else scenario.output_root
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_name = output_name or f"{scenario.scenario_id}_{timestamp}"
